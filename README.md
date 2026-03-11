@@ -1,13 +1,41 @@
-## Running React on Replit
+# Umai うまい — Deliberate Practice App
 
-[React](https://reactjs.org/) is a popular JavaScript library for building user interfaces.
+Build real skill through deliberate practice. Structured drill trees, fire motivation, and progress tracking.
 
-[Vite](https://vitejs.dev/) is a blazing fast frontend build tool that includes features like Hot Module Reloading (HMR), optimized builds, and TypeScript support out of the box.
+## Stack
+- React 18 + TypeScript + Vite
+- Tailwind CSS (dark theme)
+- Supabase (Auth + DB) — Phase 2+
+- Gemini API (AI drills) — Phase 3+
 
-Using the two in conjunction is one of the fastest ways to build a web app.
+## Phase 1 — Complete ✅
+- [x] Navigation (desktop + mobile bottom nav)
+- [x] Home dashboard with stats
+- [x] Skill Template Library (Badminton, Singing, Piano, Japanese, Public Speaking)
+- [x] Clone template → auto-seeds skill tree + motivations
+- [x] My Skills — create, view, delete custom skills
+- [x] Skill Detail — add/edit/delete sub-skills and drills
+- [x] Motivation Vault — Fire Statements with categories, star, rival energy field
+- [x] Offline-first (localStorage), ready for Supabase sync
 
-### Getting Started
-- Hit run
-- Edit [App.tsx](#src/App.tsx) and watch it live update!
+## Getting Started
 
-By default, Replit runs the `dev` script, but you can configure it by changing the `run` field in the [configuration file](#.replit). Here are the vite docs for [serving production websites](https://vitejs.dev/guide/build.html)
+```bash
+npm install
+npm run dev
+```
+
+For Supabase (Phase 2), add `.env`:
+```
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+## Supabase SQL (Phase 2 setup)
+```sql
+create table profiles (id uuid primary key, user_id uuid references auth.users, display_name text, created_at timestamptz default now());
+create table skills (id uuid primary key, user_id uuid, name text, category text, icon text, created_at timestamptz default now());
+create table sub_skills (id uuid primary key, skill_id uuid references skills(id) on delete cascade, name text, description text, order_index int);
+create table drills (id uuid primary key, sub_skill_id uuid references sub_skills(id) on delete cascade, name text, description text, duration_secs int, target_reps int, difficulty smallint);
+create table motivations (id uuid primary key, user_id uuid, statement text, is_favourite boolean default false, category text, created_at timestamptz default now());
+```
