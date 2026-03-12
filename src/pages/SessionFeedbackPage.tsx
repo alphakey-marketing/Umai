@@ -4,11 +4,13 @@ import { getLocalSkills, saveLocalSession } from '../lib/storage';
 import type { Session, DrillLog, ZoneRating } from '../types';
 
 const REFLECT_PROMPTS = [
-  'What was the hardest moment today, and what did you do?',
-  'If you could redo one drill, what would you change?',
-  'What surprised you about this session?',
-  'Which drill felt most like the learning zone?',
-  'What's one thing you'll do differently next session?',
+  "What was the hardest moment today, and what did you do?",
+  "If you could redo one drill, what would you change?",
+  "What surprised you about this session?",
+  "Which drill felt most like the learning zone?",
+  "What's one thing you'll do differently next session?",
+  "Where did you feel yourself improving in real time?",
+  "What would a coach watching you today say to fix?",
 ];
 
 function makeId() {
@@ -35,7 +37,9 @@ export default function SessionFeedbackPage() {
   const [rating, setRating] = useState<1|2|3|4|5>(3);
   const [wentWell, setWentWell] = useState('');
   const [improveNext, setImproveNext] = useState('');
-  const prompt = REFLECT_PROMPTS[Math.floor(Math.random() * REFLECT_PROMPTS.length)];
+  const [prompt] = useState(
+    () => REFLECT_PROMPTS[Math.floor(Math.random() * REFLECT_PROMPTS.length)]
+  );
 
   function handleSave() {
     if (!skill) return;
@@ -84,14 +88,18 @@ export default function SessionFeedbackPage() {
         <p className="text-5xl font-black">{focusScore}%</p>
         <p className="text-sm font-semibold mt-1">Focus Score (time in 🟡 learning zone)</p>
         {focusScore >= 70 && <p className="text-yellow-300 text-sm mt-2">🔥 You were in the zone today!</p>}
-        {focusScore < 40 && focusScore > 0 && <p className="text-gray-400 text-xs mt-2">Try adjusting drill difficulty next session to stay in the learning zone.</p>}
+        {focusScore < 40 && focusScore > 0 && (
+          <p className="text-gray-400 text-xs mt-2">
+            Try adjusting drill difficulty next session to stay in the learning zone.
+          </p>
+        )}
       </div>
 
       {/* Zone breakdown */}
-      {drillLogs.length > 0 && (
+      {(drillLogs ?? []).length > 0 && (
         <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-2">
           <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Drill Breakdown</p>
-          {drillLogs.map(l => {
+          {(drillLogs ?? []).map(l => {
             const z = l.zone_ratings[0];
             const icon = z === 'comfort' ? '🟢' : z === 'learning' ? '🟡' : '🔴';
             return (
@@ -122,7 +130,7 @@ export default function SessionFeedbackPage() {
         </div>
       </div>
 
-      {/* Reflection prompts */}
+      {/* Reflection */}
       <div className="space-y-3">
         <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Reflect</p>
         <p className="text-sm text-gray-400 italic">{prompt}</p>
