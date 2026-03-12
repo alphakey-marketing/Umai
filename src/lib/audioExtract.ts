@@ -1,109 +1,125 @@
 /**
  * audioExtract.ts
  *
- * Extracts a mono 16 kHz PCM Float32Array from ANY video file.
+ * Extracts mono 16 kHz PCM from any video File the browser can play.
  *
- * Uses @ffmpeg/ffmpeg with the SINGLE-THREAD core loaded from unpkg CDN.
- * Single-thread mode does NOT require SharedArrayBuffer, so no
- * Cross-Origin-Embedder-Policy header is needed — the app works normally
- * in Replit previews and all sandboxed iframes.
+ * Method: hidden muted <video> → createMediaElementSource → ScriptProcessorNode
+ * → collect Float32Array chunks → resample to 16 kHz.
  *
- * Pipeline:
- *   File  →  ffmpeg.wasm (demux + decode + resample to 16 kHz mono WAV)
- *         →  AudioContext.decodeAudioData (WAV is always decodeable)
- *         →  Float32Array PCM
+ * Why this works in Replit sandboxed iframes:
+ *   ✅ No captureStream()  — blocked in sandboxed iframes
+ *   ✅ No OfflineAudioContext.createMediaElementSource — needs autoplay grant
+ *   ✅ No ffmpeg.wasm      — breaks Vite module graph at startup
+ *   ✅ No decodeAudioData on mp4 — browser demuxer unreliable
+ *   ✅ muted video         — autoplay always allowed when muted
  */
-
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
-
-let _ffmpeg: FFmpeg | null = null;
-let _loaded = false;
-
-async function getFFmpeg(onProgress?: (pct: number) => void): Promise<FFmpeg> {
-  if (_ffmpeg && _loaded) return _ffmpeg;
-
-  _ffmpeg = new FFmpeg();
-
-  // Single-thread core — no SharedArrayBuffer, no COEP header required
-  // ~31 MB, cached by browser after first load
-  const BASE = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-
-  await _ffmpeg.load({
-    coreURL: await toBlobURL(`${BASE}/ffmpeg-core.js`,   'text/javascript'),
-    wasmURL: await toBlobURL(`${BASE}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
-
-  _ffmpeg.on('progress', ({ progress }) => {
-    onProgress?.(15 + Math.round(progress * 70));
-  });
-
-  _loaded = true;
-  return _ffmpeg;
-}
-
-export async function extractAudioFromVideo(
+export function extractAudioFromVideo(
   videoFile: File,
   onProgress?: (pct: number) => void
 ): Promise<{ pcm: Float32Array; sampleRate: number }> {
-  const TARGET_RATE = 16000;
+  return new Promise((resolve, reject) => {
+    const objectURL = URL.createObjectURL(videoFile);
 
-  onProgress?.(2);
+    const video = document.createElement('video');
+    video.src          = objectURL;
+    video.muted        = true;   // muted = always autoplayable, even in iframes
+    video.playbackRate = 4.0;    // 4× speed → 24 min episode done in ~6 min
+    video.style.cssText =
+      'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;top:-10px;left:-10px';
+    document.body.appendChild(video);
 
-  // 1. Boot ffmpeg (cached after first use)
-  const ffmpeg = await getFFmpeg(onProgress);
-  onProgress?.(15);
+    function cleanup() {
+      try { video.pause(); }             catch { /* ignore */ }
+      try { document.body.removeChild(video); } catch { /* ignore */ }
+      URL.revokeObjectURL(objectURL);
+    }
 
-  // 2. Write input into ffmpeg virtual FS
-  const ext        = getExt(videoFile.name);
-  const inputName  = `input${ext}`;
-  const outputName = 'audio.wav';
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('Could not load video. Make sure it is a valid mp4, webm, or mkv file.'));
+    };
 
-  await ffmpeg.writeFile(inputName, await fetchFile(videoFile));
-  onProgress?.(25);
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      if (!isFinite(duration) || duration <= 0) {
+        cleanup();
+        reject(new Error('Could not read video duration.'));
+        return;
+      }
 
-  // 3. Demux + resample to 16 kHz mono WAV
-  await ffmpeg.exec([
-    '-i',      inputName,
-    '-vn',                    // strip video track
-    '-acodec', 'pcm_s16le',   // raw 16-bit PCM
-    '-ar',     String(TARGET_RATE),
-    '-ac',     '1',           // mono
-    outputName,
-  ]);
-  onProgress?.(85);
+      const CAPTURE_RATE = 44100;
+      const TARGET_RATE  = 16000;
 
-  // 4. Read the WAV back
-  const wavData = await ffmpeg.readFile(outputName) as Uint8Array;
+      let audioCtx: AudioContext;
+      try {
+        audioCtx = new AudioContext({ sampleRate: CAPTURE_RATE });
+      } catch (e) {
+        cleanup();
+        reject(new Error('AudioContext not available: ' + (e as Error).message));
+        return;
+      }
 
-  // 5. Tidy up virtual FS
-  await ffmpeg.deleteFile(inputName).catch(() => {});
-  await ffmpeg.deleteFile(outputName).catch(() => {});
-  onProgress?.(90);
+      const source    = audioCtx.createMediaElementSource(video);
+      // ScriptProcessorNode lets us capture raw PCM in real time.
+      // Deprecated but universally supported — AudioWorklet needs HTTPS + COOP.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      const collected: Float32Array[] = [];
 
-  // 6. Decode WAV → AudioBuffer (WAV always decodes fine)
-  const ctx      = new AudioContext({ sampleRate: TARGET_RATE });
-  const audioBuf = await ctx.decodeAudioData(
-    wavData.buffer.slice(wavData.byteOffset, wavData.byteOffset + wavData.byteLength)
-  );
-  ctx.close();
-  onProgress?.(100);
+      processor.onaudioprocess = (e: AudioProcessingEvent) => {
+        // Must copy — the underlying buffer is recycled after the event
+        collected.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        const pct = Math.min(99, Math.round((video.currentTime / duration) * 100));
+        onProgress?.(pct);
+      };
 
-  return { pcm: toMono(audioBuf), sampleRate: TARGET_RATE };
+      // source → processor → destination (silent because video is muted)
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      video.onended = () => {
+        processor.disconnect();
+        source.disconnect();
+        audioCtx.close();
+        cleanup();
+        onProgress?.(100);
+
+        // Merge chunks
+        const totalLen = collected.reduce((s, c) => s + c.length, 0);
+        const full     = new Float32Array(totalLen);
+        let offset = 0;
+        for (const chunk of collected) { full.set(chunk, offset); offset += chunk.length; }
+
+        // Downsample 44100 → 16000
+        const pcm = resample(full, CAPTURE_RATE, TARGET_RATE);
+        resolve({ pcm, sampleRate: TARGET_RATE });
+      };
+
+      // Play — always succeeds for muted video regardless of iframe sandbox
+      video.play().catch((err) => {
+        processor.disconnect();
+        source.disconnect();
+        audioCtx.close();
+        cleanup();
+        reject(new Error('Video play() failed: ' + (err as Error).message));
+      });
+    };
+  });
 }
 
-function getExt(name: string): string {
-  const m = name.match(/\.[^.]+$/);
-  return m ? m[0].toLowerCase() : '.mp4';
-}
-
-function toMono(buf: AudioBuffer): Float32Array {
-  const numCh = buf.numberOfChannels;
-  const len   = buf.length;
-  const mono  = new Float32Array(len);
-  for (let ch = 0; ch < numCh; ch++) {
-    const d = buf.getChannelData(ch);
-    for (let i = 0; i < len; i++) mono[i] += d[i] / numCh;
+/** Linear interpolation resample */
+function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+  if (fromRate === toRate) return input;
+  const ratio  = fromRate / toRate;
+  const length = Math.round(input.length / ratio);
+  const output = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const pos = i * ratio;
+    const idx = Math.floor(pos);
+    const f   = pos - idx;
+    const a   = input[idx]     ?? 0;
+    const b   = input[idx + 1] ?? 0;
+    output[i] = a + f * (b - a);
   }
-  return mono;
+  return output;
 }
