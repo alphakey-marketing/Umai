@@ -1,83 +1,134 @@
 /**
- * Whisper API client — Phase 2B.
+ * whisperClient.ts — In-browser transcription via Transformers.js
  *
- * Sends an audio blob to OpenAI Whisper and returns SubtitleLine[].
- * Requires VITE_OPENAI_API_KEY in .env
+ * Uses @xenova/transformers running entirely in a Web Worker.
+ * - FREE: no API key, no server, no cost ever.
+ * - First run: downloads whisper-small (~240 MB) and caches in browser IndexedDB.
+ * - Subsequent runs: instant load from cache.
  *
- * Usage:
- *   const lines = await transcribeWithWhisper(audioBlob, 'ja');
+ * Public API:
+ *   transcribeAudioBuffer(audioBuffer)  → Promise<SubtitleLine[]>
+ *   transcribeVideoFile(videoFile)      → Promise<SubtitleLine[]>
+ *   onProgress(cb)                      → listen to model download progress
  */
 
-import { parseSRT } from './subtitleParser';
 import type { SubtitleLine } from '../types';
 
-const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
+export type TranscribeProgressEvent = {
+  status: 'initiate' | 'download' | 'progress' | 'done' | 'ready';
+  name?: string;
+  progress?: number;   // 0–100
+  file?: string;
+};
 
-export function isWhisperAvailable(): boolean {
-  return !!import.meta.env.VITE_OPENAI_API_KEY;
+type ProgressCallback = (event: TranscribeProgressEvent) => void;
+
+let worker: Worker | null = null;
+let progressCb: ProgressCallback | null = null;
+
+function getWorker(): Worker {
+  if (!worker) {
+    worker = new Worker(
+      new URL('./transcribeWorker.ts', import.meta.url),
+      { type: 'module' }
+    );
+  }
+  return worker;
+}
+
+/** Register a callback for model download / transcription progress events. */
+export function onTranscribeProgress(cb: ProgressCallback): void {
+  progressCb = cb;
 }
 
 /**
- * Transcribe an audio blob using OpenAI Whisper.
- * Returns SubtitleLine[] with timestamps.
- *
- * @param audioBlob  - Audio file as Blob (mp3, mp4, wav, webm etc.)
- * @param language   - ISO 639-1 language code, default 'ja'
+ * Transcribe an AudioBuffer (already decoded PCM) → SubtitleLine[].
+ * This is the lowest-level call — used internally by transcribeVideoFile.
  */
-export async function transcribeWithWhisper(
-  audioBlob: Blob,
-  language = 'ja'
+export function transcribeAudioBuffer(
+  audioBuffer: AudioBuffer
 ): Promise<SubtitleLine[]> {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-  if (!apiKey) throw new Error('VITE_OPENAI_API_KEY is not set.');
+  return new Promise((resolve, reject) => {
+    const w = getWorker();
 
-  const form = new FormData();
-  form.append('file', audioBlob, 'audio.webm');
-  form.append('model', 'whisper-1');
-  form.append('language', language);
-  form.append('response_format', 'srt');  // request SRT directly
+    // Merge to mono by averaging all channels
+    const numChannels = audioBuffer.numberOfChannels;
+    const length      = audioBuffer.length;
+    const mono        = new Float32Array(length);
+    for (let ch = 0; ch < numChannels; ch++) {
+      const channel = audioBuffer.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        mono[i] += channel[i] / numChannels;
+      }
+    }
 
-  const res = await fetch(WHISPER_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+    function onMessage(e: MessageEvent) {
+      const { type, lines, data, message } = e.data as {
+        type: string;
+        lines?: SubtitleLine[];
+        data?: TranscribeProgressEvent;
+        message?: string;
+      };
+
+      if (type === 'progress' && data && progressCb) {
+        progressCb(data);
+      } else if (type === 'result' && lines) {
+        w.removeEventListener('message', onMessage);
+        resolve(lines);
+      } else if (type === 'error') {
+        w.removeEventListener('message', onMessage);
+        reject(new Error(message ?? 'Transcription failed'));
+      }
+    }
+
+    w.addEventListener('message', onMessage);
+    w.postMessage(
+      { type: 'transcribe', audioData: mono, sampleRate: audioBuffer.sampleRate },
+      [mono.buffer]   // transfer ownership — avoids copying large buffer
+    );
   });
+}
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Whisper API error ${res.status}: ${err}`);
+/**
+ * Transcribe a video or audio File directly.
+ * Decodes audio via Web Audio API, then sends to the worker.
+ *
+ * @param file     - Any File (mp4, mkv, webm, mp3, m4a …)
+ * @param offsetS  - Start offset in seconds (default 0)
+ * @param durationS - How many seconds to transcribe (default: full file)
+ */
+export async function transcribeVideoFile(
+  file: File,
+  offsetS   = 0,
+  durationS?: number
+): Promise<SubtitleLine[]> {
+  const arrayBuffer  = await file.arrayBuffer();
+  const audioCtx     = new AudioContext({ sampleRate: 16000 });
+  const audioBuffer  = await audioCtx.decodeAudioData(arrayBuffer);
+  audioCtx.close();
+
+  if (offsetS === 0 && !durationS) {
+    return transcribeAudioBuffer(audioBuffer);
   }
 
-  const srtText = await res.text();
-  return parseSRT(srtText);
+  // Slice the AudioBuffer to the requested range
+  const startSample  = Math.floor(offsetS * audioBuffer.sampleRate);
+  const endSample    = durationS
+    ? Math.min(startSample + Math.floor(durationS * audioBuffer.sampleRate), audioBuffer.length)
+    : audioBuffer.length;
+  const sliceLen     = endSample - startSample;
+  const sliceCtx     = new OfflineAudioContext(1, sliceLen, audioBuffer.sampleRate);
+  const src          = sliceCtx.createBufferSource();
+  src.buffer         = audioBuffer;
+  src.connect(sliceCtx.destination);
+  src.start(0, offsetS, durationS);
+  const sliced       = await sliceCtx.startRendering();
+
+  return transcribeAudioBuffer(sliced);
 }
 
-/**
- * Extract audio from a <video> element and transcribe.
- * Uses MediaRecorder to capture what is playing.
- *
- * NOTE: This records from the video element directly —
- * the video must be on the same origin or CORS-enabled.
- */
-export async function transcribeVideoElement(
-  videoEl: HTMLVideoElement,
-  durationMs = 30_000
-): Promise<SubtitleLine[]> {
-  const stream = (videoEl as HTMLVideoElement & { captureStream(): MediaStream }).captureStream();
-  const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-  const chunks: Blob[] = [];
-
-  return new Promise((resolve, reject) => {
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-    recorder.onstop = async () => {
-      try {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        const lines = await transcribeWithWhisper(blob);
-        resolve(lines);
-      } catch (e) { reject(e); }
-    };
-    recorder.onerror = reject;
-    recorder.start();
-    setTimeout(() => recorder.stop(), durationMs);
-  });
+/** Clean up the worker (call on component unmount if needed). */
+export function destroyWorker(): void {
+  worker?.terminate();
+  worker = null;
 }

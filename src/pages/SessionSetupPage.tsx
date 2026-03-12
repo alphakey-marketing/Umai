@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ANIME_LIBRARY } from '../data/animeLibrary';
 import { parseSubtitleFile } from '../lib/subtitleParser';
-import { isWhisperAvailable } from '../lib/whisperClient';
 import type { AnimeTitle, ShadowingMode, SubtitleLine } from '../types';
 
 export default function SessionSetupPage() {
@@ -22,7 +21,6 @@ export default function SessionSetupPage() {
   const [videoFile, setVideoFile]   = useState<File | null>(null);
   const [error, setError]           = useState<string | null>(null);
 
-  // When anime changes, reset episode to 1
   useEffect(() => { setEpisodeNum(1); }, [anime?.id]);
 
   function handleSRTUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -45,7 +43,7 @@ export default function SessionSetupPage() {
   }
 
   function handleStart() {
-    if (!anime) { setError('Please select an anime.'); return; }
+    if (!anime)     { setError('Please select an anime.'); return; }
     if (!videoFile) { setError('Please upload a video file.'); return; }
 
     let parsedLines: SubtitleLine[] = [];
@@ -69,13 +67,14 @@ export default function SessionSetupPage() {
         episode,
         mode,
         subtitleLines: parsedLines,
+        videoFile,                           // pass File directly for Transformers.js
         videoObjectURL: URL.createObjectURL(videoFile),
       },
     });
   }
 
   const MODES: { value: ShadowingMode; label: string; desc: string; emoji: string }[] = [
-    { value: 'watch',     label: 'Watch',     emoji: '👀', desc: 'Just watch with Japanese subtitles' },
+    { value: 'watch',     label: 'Watch',     emoji: '👀', desc: 'Watch with Japanese subtitles' },
     { value: 'shadow',    label: 'Shadow',    emoji: '🗣️', desc: 'Auto-pause each line. Repeat aloud.' },
     { value: 'dictation', label: 'Dictation', emoji: '✏️', desc: 'Subtitles hidden. Guess then reveal.' },
   ];
@@ -84,7 +83,7 @@ export default function SessionSetupPage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-black">🎬 Setup Session</h1>
-        <p className="text-gray-400 text-sm mt-1">Choose your anime, upload video + subtitles, pick a mode.</p>
+        <p className="text-gray-400 text-sm mt-1">Choose anime, upload video + subtitles, pick a mode.</p>
       </header>
 
       {/* Anime selector */}
@@ -100,7 +99,7 @@ export default function SessionSetupPage() {
             <button onClick={() => setAnime(null)} className="text-xs text-gray-500 hover:text-white">Change</button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto">
+          <div className="grid gap-2 max-h-60 overflow-y-auto">
             {ANIME_LIBRARY.map(a => (
               <button
                 key={a.id}
@@ -124,15 +123,11 @@ export default function SessionSetupPage() {
         <section className="space-y-2">
           <label className="text-xs font-bold uppercase tracking-widest text-indigo-400">Episode</label>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setEpisodeNum(n => Math.max(1, n - 1))}
-              className="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 font-bold text-lg"
-            >-</button>
+            <button onClick={() => setEpisodeNum(n => Math.max(1, n - 1))}
+              className="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 font-bold text-lg">-</button>
             <span className="flex-1 text-center text-xl font-black">Ep. {episodeNum}</span>
-            <button
-              onClick={() => setEpisodeNum(n => Math.min(anime.episode_count, n + 1))}
-              className="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 font-bold text-lg"
-            >+</button>
+            <button onClick={() => setEpisodeNum(n => Math.min(anime.episode_count, n + 1))}
+              className="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 font-bold text-lg">+</button>
           </div>
         </section>
       )}
@@ -142,15 +137,10 @@ export default function SessionSetupPage() {
         <label className="text-xs font-bold uppercase tracking-widest text-indigo-400">Mode</label>
         <div className="grid grid-cols-3 gap-2">
           {MODES.map(m => (
-            <button
-              key={m.value}
-              onClick={() => setMode(m.value)}
+            <button key={m.value} onClick={() => setMode(m.value)}
               className={`rounded-xl border-2 p-3 text-left transition-all ${
-                mode === m.value
-                  ? 'border-indigo-500 bg-indigo-950/40'
-                  : 'border-gray-700 bg-gray-900 hover:border-gray-500'
-              }`}
-            >
+                mode === m.value ? 'border-indigo-500 bg-indigo-950/40' : 'border-gray-700 bg-gray-900 hover:border-gray-500'
+              }`}>
               <span className="text-2xl block mb-1">{m.emoji}</span>
               <p className="text-xs font-bold">{m.label}</p>
               <p className="text-xs text-gray-500 mt-0.5 leading-tight">{m.desc}</p>
@@ -178,7 +168,7 @@ export default function SessionSetupPage() {
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-xs font-bold uppercase tracking-widest text-indigo-400">Subtitle File</label>
-          <span className="text-xs text-gray-600">optional — .srt or .vtt</span>
+          <span className="text-xs text-gray-500">optional — .srt or .vtt</span>
         </div>
         <label className={`flex items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 cursor-pointer transition-colors ${
           srtText ? 'border-indigo-600 bg-indigo-950/20' : 'border-gray-700 hover:border-gray-500'
@@ -187,28 +177,22 @@ export default function SessionSetupPage() {
           <div className="flex-1">
             <p className="text-sm font-bold">{srtText ? srtName : 'Upload .srt / .vtt'}</p>
             <p className="text-xs text-gray-500">
-              {srtText ? 'Subtitle loaded ✓' : 'Skip to use Whisper AI (requires API key)'}
+              {srtText ? 'Subtitle loaded ✓' : 'Skip to auto-generate with in-browser Whisper (free)'}
             </p>
           </div>
           <input type="file" accept=".srt,.vtt,text/*" className="hidden" onChange={handleSRTUpload} />
         </label>
         {!srtText && (
-          <p className={`text-xs px-1 ${
-            isWhisperAvailable() ? 'text-green-400' : 'text-gray-600'
-          }`}>
-            {isWhisperAvailable()
-              ? '✓ Whisper AI ready — will auto-transcribe on session start'
-              : 'Whisper not configured (add VITE_OPENAI_API_KEY to .env to enable)'}
+          <p className="text-xs text-indigo-400 px-1">
+            🧠 No SRT? Whisper runs in your browser — free, no API key needed.
           </p>
         )}
       </section>
 
-      {/* Error */}
       {error && (
         <p className="text-sm text-red-400 bg-red-950/30 border border-red-900 rounded-xl px-4 py-2">{error}</p>
       )}
 
-      {/* Start button */}
       <button
         onClick={handleStart}
         disabled={!anime || !videoFile}
@@ -218,7 +202,7 @@ export default function SessionSetupPage() {
       </button>
 
       <p className="text-center text-xs text-gray-600">
-        No video? <Link to="/templates" className="text-indigo-400 hover:underline">Browse the anime library</Link> for recommendations.
+        No video? <Link to="/templates" className="text-indigo-400 hover:underline">Browse anime library</Link> for recommendations.
       </p>
     </div>
   );
