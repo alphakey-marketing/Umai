@@ -1,55 +1,47 @@
 import { Outlet, NavLink } from 'react-router-dom';
 
-const navItems = [
-  { to: '/',          label: 'Home',      emoji: '🏠' },
-  { to: '/session',   label: 'Session',   emoji: '🔥' },
-  { to: '/progress',  label: 'Progress',  emoji: '📊' },
-  { to: '/skills',    label: 'My Skills', emoji: '⚡' },
-  { to: '/vault',     label: 'Vault',     emoji: '❤️‍🔥' },
-];
-
 export default function Layout() {
   return (
-    <div className="flex flex-col min-h-screen">
-      <header className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
-        <span className="font-bold text-lg tracking-tight text-orange-400">うまい <span className="text-white text-sm font-normal">Umai</span></span>
-        <nav className="hidden sm:flex gap-1">
-          {navItems.map(({ to, label, emoji }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                  isActive
-                    ? 'bg-orange-500 text-white font-semibold'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                }`
-              }
-            >
-              {emoji} {label}
-            </NavLink>
-          ))}
-        </nav>
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      {/* Top bar */}
+      <header className="sticky top-0 z-10 bg-gray-950/90 backdrop-blur border-b border-gray-800 px-4 py-3 flex items-center justify-between">
+        <NavLink to="/" className="text-lg font-black tracking-tight">
+          <span className="text-indigo-400">うまい</span>
+          <span className="text-gray-400 text-sm font-medium ml-2">Japanese Shadowing</span>
+        </NavLink>
+        <NavLink
+          to="/session"
+          className="text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-full transition-colors"
+        >
+          ▶ Shadow
+        </NavLink>
       </header>
 
-      <main className="flex-1 px-4 py-6 max-w-3xl mx-auto w-full pb-24 sm:pb-6">
+      {/* Main content */}
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
         <Outlet />
       </main>
 
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 bg-gray-900 border-t border-gray-800 flex justify-around py-2 z-50">
-        {navItems.map(({ to, label, emoji }) => (
+      {/* Bottom nav */}
+      <nav className="sticky bottom-0 bg-gray-950/90 backdrop-blur border-t border-gray-800 flex justify-around px-2 py-2">
+        {([
+          ['/', '🏠', 'Home'],
+          ['/templates', '🎬', 'Anime'],
+          ['/session', '🗣️', 'Shadow'],
+          ['/vault', '📚', 'Vault'],
+          ['/progress', '📊', 'Progress'],
+        ] as const).map(([to, emoji, label]) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `flex flex-col items-center text-xs gap-0.5 px-2 py-1 rounded-lg transition-colors ${
-                isActive ? 'text-orange-400 font-semibold' : 'text-gray-500 hover:text-white'
+              `flex flex-col items-center gap-0.5 px-3 py-1 rounded-xl text-xs transition-colors ${
+                isActive ? 'text-indigo-400 font-bold' : 'text-gray-500 hover:text-gray-300'
               }`
             }
           >
-            <span className="text-xl leading-none">{emoji}</span>
+            <span className="text-xl">{emoji}</span>
             {label}
           </NavLink>
         ))}

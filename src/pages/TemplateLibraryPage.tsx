@@ -1,137 +1,117 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { SKILL_TEMPLATES, MOTIVATION_SEEDS } from '../data/skillTemplates';
-import { upsertLocalSkill, upsertLocalMotivation, getLocalSkills } from '../lib/storage';
-import type { Skill, SubSkill, Drill, Motivation } from '../types';
+import { Link } from 'react-router-dom';
+import { ANIME_LIBRARY } from '../data/animeLibrary';
+import type { JLPTLevel, AnimeTag } from '../types';
 
-function makeId() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
+const LEVELS: JLPTLevel[] = ['N5', 'N4', 'N3', 'N2', 'N1'];
+const TAGS: AnimeTag[] = ['日常会話', '推理', '料理', '自然', '学校', 'ファンタジー', 'スポーツ', '歴史'];
 
 export default function TemplateLibraryPage() {
-  const navigate = useNavigate();
-  const existingSkills = getLocalSkills();
-  const [cloned, setCloned] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [levelFilter, setLevelFilter] = useState<JLPTLevel | 'ALL'>('ALL');
+  const [tagFilter, setTagFilter]     = useState<AnimeTag | 'ALL'>('ALL');
 
-  const categories = Array.from(new Set(SKILL_TEMPLATES.map(t => t.category)));
-
-  function handleClone(templateId: string) {
-    const tpl = SKILL_TEMPLATES.find(t => t.id === templateId);
-    if (!tpl) return;
-
-    const alreadyExists = existingSkills.some(s => s.name === tpl.name);
-    if (alreadyExists) {
-      navigate('/skills');
-      return;
-    }
-
-    const skillId = makeId();
-    const skill: Skill = {
-      id: skillId,
-      user_id: 'guest',
-      name: tpl.name,
-      category: tpl.category,
-      icon: tpl.icon,
-      created_at: new Date().toISOString(),
-      sub_skills: tpl.sub_skills.map((ss, si): SubSkill => ({
-        id: makeId(),
-        skill_id: skillId,
-        name: ss.name,
-        description: ss.description,
-        order_index: si,
-        drills: ss.drills.map((d): Drill => ({
-          id: makeId(),
-          sub_skill_id: '',
-          name: d.name,
-          description: d.description,
-          duration_secs: d.duration_secs,
-          target_reps: d.target_reps,
-          difficulty: d.difficulty,
-        })),
-      })),
-    };
-
-    upsertLocalSkill(skill);
-
-    // Seed motivations
-    const seeds = MOTIVATION_SEEDS[templateId] ?? MOTIVATION_SEEDS['default'];
-    seeds.forEach(stmt => {
-      const m: Motivation = {
-        id: makeId(),
-        user_id: 'guest',
-        statement: stmt,
-        is_favourite: false,
-        category: 'battle_cry',
-        created_at: new Date().toISOString(),
-      };
-      upsertLocalMotivation(m);
-    });
-
-    setCloned(prev => new Set(prev).add(templateId));
-    navigate(`/skills/${skillId}`);
-  }
+  const filtered = ANIME_LIBRARY.filter(a => {
+    const levelOk = levelFilter === 'ALL' || a.jlpt_level === levelFilter;
+    const tagOk   = tagFilter === 'ALL' || a.tags.includes(tagFilter);
+    return levelOk && tagOk;
+  });
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-black">📚 Skill Templates</h1>
-        <p className="text-gray-400 text-sm mt-1">Choose a pre-built skill tree. You can customise every drill after cloning.</p>
+      <header className="space-y-1">
+        <h1 className="text-2xl font-black">🎬 Anime Library</h1>
+        <p className="text-sm text-gray-400">Browse titles by JLPT level or topic. Pick an episode to start shadowing.</p>
+      </header>
+
+      {/* Level filter */}
+      <div className="flex gap-2 flex-wrap">
+        {(['ALL', ...LEVELS] as const).map(l => (
+          <button
+            key={l}
+            onClick={() => setLevelFilter(l)}
+            className={`text-xs px-3 py-1.5 rounded-full border font-bold transition-colors ${
+              levelFilter === l
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-indigo-600'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
       </div>
 
-      {categories.map(cat => (
-        <section key={cat} className="space-y-3">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-orange-400">{cat}</h2>
-          {SKILL_TEMPLATES.filter(t => t.category === cat).map(tpl => (
-            <div key={tpl.id} className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
-              {/* Header */}
-              <div className="p-4 flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 flex-1">
-                  <span className="text-3xl">{tpl.icon}</span>
-                  <div>
-                    <h3 className="font-bold">{tpl.name}</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">{tpl.description}</p>
-                    <p className="text-xs text-gray-600 mt-1">{tpl.sub_skills.length} sub-skills · {tpl.sub_skills.reduce((a, ss) => a + ss.drills.length, 0)} drills</p>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={() => handleClone(tpl.id)}
-                    className="whitespace-nowrap text-xs font-semibold bg-orange-500 hover:bg-orange-400 text-white px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    {cloned.has(tpl.id) ? '✓ Cloned' : 'Clone →'}
-                  </button>
-                  <button
-                    onClick={() => setExpanded(expanded === tpl.id ? null : tpl.id)}
-                    className="text-xs text-gray-500 hover:text-white transition-colors text-center"
-                  >
-                    {expanded === tpl.id ? 'Hide ▲' : 'Preview ▼'}
-                  </button>
-                </div>
-              </div>
+      {/* Tag filter */}
+      <div className="flex gap-2 flex-wrap">
+        {(['ALL', ...TAGS] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTagFilter(t as AnimeTag | 'ALL')}
+            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+              tagFilter === t
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-indigo-600'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
 
-              {/* Expandable preview */}
-              {expanded === tpl.id && (
-                <div className="border-t border-gray-800 px-4 pb-4 space-y-3 pt-3">
-                  {tpl.sub_skills.map(ss => (
-                    <div key={ss.name}>
-                      <p className="text-xs font-semibold text-orange-300 uppercase tracking-wide">{ss.name}</p>
-                      <ul className="mt-1 space-y-1">
-                        {ss.drills.map(d => (
-                          <li key={d.name} className="text-xs text-gray-400 flex items-start gap-2">
-                            <span className="text-orange-600 mt-0.5">{'★'.repeat(d.difficulty)}</span>
-                            <span><span className="text-gray-200">{d.name}</span> — {d.description}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+      {/* Results */}
+      <div className="space-y-3">
+        {filtered.length === 0 && (
+          <p className="text-gray-500 text-sm">No anime match these filters.</p>
+        )}
+        {filtered.map(anime => (
+          <div key={anime.id} className="rounded-2xl bg-gray-800 p-4 space-y-3">
+            <div className="flex items-start gap-4">
+              <span className="text-4xl">{anime.cover_emoji}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-bold text-base">{anime.title}</h2>
+                  <JLPTBadge level={anime.jlpt_level} />
+                </div>
+                <p className="text-xs text-gray-400">{anime.title_en} · {anime.episode_count} episodes</p>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">{anime.description}</p>
+                <div className="flex gap-1 flex-wrap mt-2">
+                  {anime.tags.map(tag => (
+                    <span key={tag} className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{tag}</span>
                   ))}
                 </div>
-              )}
+              </div>
             </div>
-          ))}
-        </section>
-      ))}
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                to={`/session?anime=${anime.id}&episode=1`}
+                className="text-center text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-xl transition-colors"
+              >
+                ▶ Start Ep.1
+              </Link>
+              <Link
+                to={`/session?anime=${anime.id}`}
+                className="text-center text-sm font-bold bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-xl transition-colors"
+              >
+                Choose Episode
+              </Link>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
+  );
+}
+
+function JLPTBadge({ level }: { level: string }) {
+  const colours: Record<string, string> = {
+    N5: 'bg-green-900/60 text-green-400 border-green-800',
+    N4: 'bg-blue-900/60 text-blue-400 border-blue-800',
+    N3: 'bg-yellow-900/60 text-yellow-400 border-yellow-800',
+    N2: 'bg-orange-900/60 text-orange-400 border-orange-800',
+    N1: 'bg-red-900/60 text-red-400 border-red-800',
+  };
+  return (
+    <span className={`text-xs border px-2 py-0.5 rounded-full font-bold ${colours[level] ?? 'bg-gray-800 text-gray-400'}`}>
+      {level}
+    </span>
   );
 }

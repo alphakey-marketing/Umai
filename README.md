@@ -1,139 +1,42 @@
-# Umai うまい — Deliberate Practice App
+# うまい — Japanese Shadowing App
 
-Build real skill through deliberate practice. Structured drill trees, fire motivation, and progress tracking.
+> **Get Good at Japanese.** Shadow anime. Save sentences. Build fluency one line at a time.
 
-## Stack
-- React 18 + TypeScript + Vite
-- Tailwind CSS (dark theme)
-- Supabase (Auth + DB) — Phase 3
-- Gemini 2.0 Flash API (AI drills) — Phase 3
+Built with **React + TypeScript + Tailwind + Vite**, deployed on Replit.
 
-## Phase 1 — Complete ✅
-- [x] Navigation (desktop + mobile bottom nav)
-- [x] Home dashboard with stats
-- [x] Skill Template Library (Badminton, Singing, Piano, Japanese, Public Speaking)
-- [x] Clone template → auto-seeds skill tree + motivations
-- [x] My Skills — create, view, delete custom skills
-- [x] Skill Detail — add/edit/delete sub-skills and drills
-- [x] Motivation Vault — Fire Statements with categories, star, rival energy field
-- [x] Offline-first (localStorage), ready for Supabase sync
+## What is this?
 
-## Phase 1 UAT Fix ✅
-- [x] Preset "Prove Them Wrong" statements — 10 quick-pick chips in Vault
+うまい (Umai) is a personal Japanese learning tool focused on **shadowing** — the method of listening to native audio and immediately repeating it, matching rhythm, intonation and speed. It's designed for JLPT N4→N3 learners who want to learn from anime.
 
-## Phase 2 — Complete ✅
-- [x] Session Setup — pick skill + drills for today
-- [x] Fire Splash — full-screen motivation before every session
-- [x] Session Timer — per-drill countdown with start/pause/done
-- [x] Zone Tracker — comfort / learning / panic rating after each drill
-- [x] Mid-session Fire Flash — auto-triggers on 2× panic; manual ❤️‍🔥 button
-- [x] Post-session Feedback — focus score, drill breakdown, star rating, reflection prompts
-- [x] Session History — all sessions logged, avg focus, total minutes
+## Features (Roadmap)
 
-## Phase 3 — Complete ✅
-- [x] Progress Dashboard — focus score trend chart, zone distribution bar, per-skill sparklines, streak counter
-- [x] Supabase sync layer — `src/lib/supabase.ts` + `src/lib/sync.ts` (graceful no-op when keys absent)
-- [x] Sessions now sync to Supabase on save (fire-and-forget, localStorage always written first)
-- [x] Gemini AI drill suggestions — `src/lib/gemini.ts` analyses session zone data and suggests 3 targeted drills per sub-skill
-- [x] AI suggestions appear inline in Skill Detail, one-tap to adopt into drill tree
-- [x] Home page shows integration status (Supabase / Gemini active or not)
+| Phase | Status | Feature |
+|-------|--------|---------|
+| **1** | ✅ Done | Retheme, TypeScript types, anime library seed, new HomePage, Anime Library page |
+| **2** | 🔜 Next | Subtitle engine (SRT parser + Whisper API), SubtitlePlayer component |
+| **3** | ⏳ | Shadowing mode in SessionRunPage (auto-pause, repeat, hide/reveal) |
+| **4** | ⏳ | Vocabulary Vault — save sentences, export to Anki |
+| **5** | ⏳ | Progress dashboard — streaks, JLPT coverage, self-rating trends |
+| **6** | ⏳ | Full Anime Library with episode picker and difficulty filters |
 
-## Getting Started
+## Anime Library (seeded)
 
-```bash
-npm install
-npm run dev
-```
+| Anime | JLPT | Tags |
+|-------|------|------|
+| しろくまカフェ | N4 | 日常会話 |
+| ゆるキャン△ | N3 | 日常会話, 自然 |
+| 甘々と稲妻 | N3 | 日常会話, 料理, 学校 |
+| 名探偵コナン | N3 | 日常会話, 推理 |
+| 日常 | N3 | 日常会話, 学校 |
 
-## Environment Variables
+## Tech Stack
 
-Create a `.env` file in the project root:
+- React 18 + TypeScript
+- Tailwind CSS
+- Vite
+- localStorage (offline-first, Supabase-ready)
+- Replit for deployment
 
-```env
-# Supabase — enables cloud sync across devices
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+## Phase 2 Preview
 
-# Gemini — enables AI drill suggestions in Skill Detail
-VITE_GEMINI_API_KEY=your-gemini-api-key
-```
-
-All three integrations are optional. The app works fully offline without them.
-
-## Supabase SQL (run in Supabase SQL editor)
-
-```sql
-create table profiles (
-  id uuid primary key,
-  user_id uuid references auth.users,
-  display_name text,
-  created_at timestamptz default now()
-);
-
-create table skills (
-  id uuid primary key,
-  user_id uuid,
-  name text,
-  category text,
-  icon text,
-  created_at timestamptz default now()
-);
-
-create table sub_skills (
-  id uuid primary key,
-  skill_id uuid references skills(id) on delete cascade,
-  name text,
-  description text,
-  order_index int
-);
-
-create table drills (
-  id uuid primary key,
-  sub_skill_id uuid references sub_skills(id) on delete cascade,
-  name text,
-  description text,
-  duration_secs int,
-  target_reps int,
-  difficulty smallint
-);
-
-create table motivations (
-  id uuid primary key,
-  user_id uuid,
-  statement text,
-  is_favourite boolean default false,
-  category text,
-  created_at timestamptz default now()
-);
-
-create table sessions (
-  id uuid primary key,
-  user_id uuid,
-  skill_id uuid,
-  skill_name text,
-  skill_icon text,
-  started_at timestamptz,
-  ended_at timestamptz,
-  overall_rating smallint,
-  went_well text,
-  improve_next text,
-  focus_score int
-);
-
-create table session_drill_logs (
-  id uuid primary key,
-  session_id uuid references sessions(id) on delete cascade,
-  drill_id uuid,
-  drill_name text,
-  duration_actual_secs int,
-  reps_completed int,
-  zone_ratings text[]
-);
-```
-
-## Phase 4 — Planned
-- Supabase Auth (sign up / log in, migrate guest data)
-- Edit existing drills in-place
-- Rep counter during session
-- Audio/video clip attachment to drills
-- Weekly email digest (Supabase Edge Functions)
+Next up: `src/lib/subtitleParser.ts` — parse `.srt` files into `SubtitleLine[]` — and `src/components/SubtitlePlayer.tsx` — the core shadowing UI that advances lines in sync with a `<video>` element.
