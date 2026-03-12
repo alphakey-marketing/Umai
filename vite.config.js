@@ -1,7 +1,2 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-  server: { host: '0.0.0.0', port: 5173 },
-});
+// Intentionally empty — vite.config.ts takes precedence
+// This file is kept to avoid Replit hiding it per .replit config
