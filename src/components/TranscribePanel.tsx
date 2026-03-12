@@ -15,46 +15,48 @@ interface Props {
   onResult: (lines: SubtitleLine[]) => void;
 }
 
-type Phase = 'idle' | 'loading-model' | 'transcribing' | 'done' | 'error';
+type Phase = 'idle' | 'extracting' | 'loading-model' | 'transcribing' | 'done' | 'error';
 
 export default function TranscribePanel({ videoFile, onResult }: Props) {
   const { settings }            = useSettings();
   const [phase, setPhase]       = useState<Phase>('idle');
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatus]  = useState('');
-  const [fileMsg, setFileMsg]   = useState('');
+  const [subMsg, setSubMsg]     = useState('');
   const [error, setError]       = useState<string | null>(null);
 
   const handleTranscribe = useCallback(async () => {
     if (!videoFile) return;
     setError(null);
-    setPhase('loading-model');
+    setPhase('extracting');
     setProgress(0);
-    setFileMsg('');
-    setStatus('Connecting to Whisper model…');
+    setStatus('Extracting audio from video…');
+    setSubMsg('Playing video at 4× speed to capture audio');
 
     onTranscribeProgress((ev: TranscribeProgressEvent) => {
-      if (ev.status === 'initiate') {
+      if (ev.status === 'extracting') {
+        setPhase('extracting');
+        setProgress(ev.progress ?? 0);
+        setStatus(`Extracting audio — ${ev.progress ?? 0}%`);
+        setSubMsg('Playing video at 4× speed to capture audio…');
+      } else if (ev.status === 'initiate' || ev.status === 'download') {
         setPhase('loading-model');
-        setStatus('Downloading Whisper model…');
-        setFileMsg(ev.file ? `File: ${ev.file}` : '');
         setProgress(0);
-      } else if (ev.status === 'download') {
         setStatus('Downloading Whisper model…');
-        setFileMsg(ev.file ? `File: ${ev.file}` : '');
+        setSubMsg(ev.file ? `File: ${ev.file}` : '~244 MB — cached after first download');
       } else if (ev.status === 'progress') {
         const pct = Math.round(ev.progress ?? 0);
+        setPhase('loading-model');
         setProgress(pct);
         setStatus(`Downloading model — ${pct}%`);
-        setFileMsg(ev.file ? `File: ${ev.file}` : '');
+        setSubMsg(ev.file ? `File: ${ev.file}` : '');
       } else if (ev.status === 'done') {
-        setStatus(`Loaded ✓`);
-        setFileMsg(ev.file ? `${ev.file} ready` : '');
+        setSubMsg(ev.file ? `✓ ${ev.file}` : '✓ Loaded');
       } else if (ev.status === 'ready') {
         setPhase('transcribing');
         setProgress(0);
-        setFileMsg('');
         setStatus('Transcribing Japanese audio…');
+        setSubMsg('This may take a few minutes…');
       }
     });
 
@@ -62,6 +64,7 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
       const lines = await transcribeVideoFile(videoFile, settings.whisper_model);
       setPhase('done');
       setStatus(`Done — ${lines.length} subtitle lines found`);
+      setSubMsg('');
       onResult(lines);
     } catch (e) {
       setPhase('error');
@@ -120,40 +123,40 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
     );
   }
 
+  const showPercent = phase === 'extracting' || phase === 'loading-model';
+  const barWidth    = phase === 'transcribing' ? 60 : Math.max(progress, 2);
+  const barAnimate  = phase === 'transcribing';
+
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 space-y-3">
       {/* Status row */}
       <div className="flex items-center gap-3">
-        <span className="text-xl animate-spin">⏳</span>
+        <span className="text-xl animate-spin shrink-0">⏳</span>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-200 font-semibold">{statusMsg}</p>
-          {fileMsg ? <p className="text-xs text-gray-500 truncate mt-0.5">{fileMsg}</p> : null}
+          {subMsg && <p className="text-xs text-gray-500 mt-0.5 truncate">{subMsg}</p>}
         </div>
-        {phase === 'loading-model' && (
+        {showPercent && (
           <span className="text-sm font-bold text-indigo-400 shrink-0">{progress}%</span>
         )}
       </div>
 
-      {/* Progress bar — always visible once started */}
-      {phase === 'loading-model' ? (
-        <div className="space-y-1">
-          <div className="w-full bg-gray-800 rounded-full h-2.5">
-            <div
-              className="bg-indigo-500 h-2.5 rounded-full transition-all duration-300"
-              style={{ width: `${Math.max(progress, 2)}%` }}
-            />
-          </div>
-          <p className="text-xs text-gray-600">
-            {progress === 0
-              ? 'Starting download — ~244 MB for whisper-small (cached after first run)'
-              : 'Cached after first download — future runs are instant'}
-          </p>
-        </div>
-      ) : (
-        <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
-          <div className="bg-indigo-500 h-2.5 rounded-full animate-pulse w-2/3" />
-        </div>
-      )}
+      {/* Progress bar */}
+      <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
+        <div
+          className={`bg-indigo-500 h-2.5 rounded-full transition-all duration-300 ${
+            barAnimate ? 'animate-pulse' : ''
+          }`}
+          style={{ width: `${barWidth}%` }}
+        />
+      </div>
+
+      {/* Phase hint */}
+      <p className="text-xs text-gray-600">
+        {phase === 'extracting'    && 'Audio extraction — runs at 4× speed in background'}
+        {phase === 'loading-model' && 'Model cached after first download — future runs are instant'}
+        {phase === 'transcribing'  && 'Running speech recognition on extracted audio…'}
+      </p>
     </div>
   );
 }
