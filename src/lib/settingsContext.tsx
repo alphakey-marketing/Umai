@@ -1,12 +1,7 @@
 /**
- * SettingsContext — makes UserSettings available everywhere without prop-drilling.
- *
- * Usage:
- *   const { settings, update } = useSettings();
- *   update({ whisper_model: 'Xenova/whisper-medium' });
+ * SettingsContext — global UserSettings available via useSettings().
  */
-
-import { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
 import { loadSettings, saveSettings } from './settings';
 import type { UserSettings } from './settings';
 

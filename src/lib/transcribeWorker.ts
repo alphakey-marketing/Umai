@@ -1,12 +1,12 @@
 /**
- * Web Worker: runs Transformers.js Whisper pipeline off the main thread.
+ * Web Worker: Transformers.js Whisper pipeline (off main thread).
  *
  * Message IN:  { type: 'transcribe', audioData: Float32Array, sampleRate: number, model: string }
- * Message OUT: { type: 'progress', data }  |  { type: 'result', lines }  |  { type: 'error', message }
+ * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
  */
 
 import { pipeline, env } from '@xenova/transformers';
-import type { SubtitleLine } from '../types';
+import type { SubtitleLine } from '../types/index';
 
 env.allowLocalModels = false;
 env.useBrowserCache  = true;
@@ -17,7 +17,6 @@ let currentModel = '';
 let transcriber: Awaited<ReturnType<typeof pipeline>> | null = null;
 
 async function getTranscriber(model: string) {
-  // Re-initialise if model changed
   if (transcriber && currentModel === model) return transcriber;
   transcriber  = null;
   currentModel = model;
@@ -38,7 +37,6 @@ self.onmessage = async (event: MessageEvent) => {
     type: string; audioData: Float32Array; sampleRate: number; model: string;
   };
   if (type !== 'transcribe') return;
-
   try {
     const pipe  = await getTranscriber(model ?? 'Xenova/whisper-small');
     const audio = sampleRate === 16000 ? audioData : resampleTo16k(audioData, sampleRate);
@@ -55,7 +53,7 @@ self.onmessage = async (event: MessageEvent) => {
 
 function chunksToSubtitleLines(chunks: WhisperChunk[]): SubtitleLine[] {
   const lines: SubtitleLine[] = [];
-  let buffer: WhisperChunk[]  = [];
+  let buffer: WhisperChunk[] = [];
   let idx = 0;
   function flush() {
     if (!buffer.length) return;

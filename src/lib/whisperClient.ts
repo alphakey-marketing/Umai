@@ -1,9 +1,7 @@
 /**
  * whisperClient.ts — In-browser transcription via Transformers.js Web Worker.
- * Model is passed in at call time so Settings changes take effect immediately.
  */
-
-import type { SubtitleLine } from '../types';
+import type { SubtitleLine } from '../types/index';
 
 export type TranscribeProgressEvent = {
   status: 'initiate' | 'download' | 'progress' | 'done' | 'ready';
@@ -14,7 +12,7 @@ export type TranscribeProgressEvent = {
 
 type ProgressCallback = (event: TranscribeProgressEvent) => void;
 
-let worker: Worker | null     = null;
+let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
 
 function getWorker(): Worker {
@@ -54,25 +52,25 @@ export function transcribeAudioBuffer(
 
 export async function transcribeVideoFile(
   file: File,
-  model  = 'Xenova/whisper-small',
+  model = 'Xenova/whisper-small',
   offsetS = 0,
   durationS?: number
 ): Promise<SubtitleLine[]> {
-  const arrayBuffer  = await file.arrayBuffer();
-  const audioCtx     = new AudioContext({ sampleRate: 16000 });
-  const audioBuffer  = await audioCtx.decodeAudioData(arrayBuffer);
+  const arrayBuffer = await file.arrayBuffer();
+  const audioCtx    = new AudioContext({ sampleRate: 16000 });
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
   audioCtx.close();
   if (offsetS === 0 && !durationS) return transcribeAudioBuffer(audioBuffer, model);
-  const startSample  = Math.floor(offsetS * audioBuffer.sampleRate);
-  const endSample    = durationS
+  const startSample = Math.floor(offsetS * audioBuffer.sampleRate);
+  const endSample   = durationS
     ? Math.min(startSample + Math.floor(durationS * audioBuffer.sampleRate), audioBuffer.length)
     : audioBuffer.length;
-  const sliceCtx     = new OfflineAudioContext(1, endSample - startSample, audioBuffer.sampleRate);
-  const src          = sliceCtx.createBufferSource();
-  src.buffer         = audioBuffer;
+  const sliceCtx    = new OfflineAudioContext(1, endSample - startSample, audioBuffer.sampleRate);
+  const src         = sliceCtx.createBufferSource();
+  src.buffer        = audioBuffer;
   src.connect(sliceCtx.destination);
   src.start(0, offsetS, durationS);
-  const sliced       = await sliceCtx.startRendering();
+  const sliced      = await sliceCtx.startRendering();
   return transcribeAudioBuffer(sliced, model);
 }
 
