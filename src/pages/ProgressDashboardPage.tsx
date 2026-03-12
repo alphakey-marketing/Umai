@@ -1,111 +1,124 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { getLocalSessions, getLocalSkills } from '../lib/storage';
-import type { Session, ZoneRating } from '../types';
+import {
+  getShadowSessions,
+  getVaultEntries,
+  getStreaks,
+  getCurrentStreak,
+  getTotalShadowMinutes,
+  getTotalSentencesShadowed,
+} from '../lib/shadowStorage';
+import { ANIME_LIBRARY } from '../data/animeLibrary';
 
-const ZONE_COLOUR: Record<ZoneRating, string> = {
-  comfort:  'bg-green-500',
-  learning: 'bg-yellow-400',
-  panic:    'bg-red-500',
-};
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-HK', { month: 'short', day: 'numeric' });
-}
+function pad(n: number) { return String(n).padStart(2, '0'); }
 
-function focusColour(score: number) {
-  if (score >= 70) return 'text-yellow-400';
-  if (score >= 40) return 'text-orange-400';
-  return 'text-red-400';
-}
-
-function sparkLine(values: number[], max: number) {
-  if (values.length === 0) return null;
-  const w = 80;
-  const h = 28;
+function SparkLine({ values, max, colour = '#818cf8' }: { values: number[]; max: number; colour?: string }) {
+  if (values.length < 2) return null;
+  const W = 100; const H = 32;
   const pts = values.map((v, i) => {
-    const x = (i / Math.max(values.length - 1, 1)) * w;
-    const y = h - (v / (max || 1)) * h;
-    return `${x},${y}`;
-  });
+    const x = (i / (values.length - 1)) * W;
+    const y = H - (v / (max || 1)) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
   return (
-    <svg width={w} height={h} className="overflow-visible">
-      <polyline
-        points={pts.join(' ')}
-        fill="none"
-        stroke="#f97316"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-8 overflow-visible">
+      <polyline points={pts} fill="none" stroke={colour} strokeWidth="2"
+        strokeLinejoin="round" strokeLinecap="round" />
       {values.map((v, i) => {
-        const x = (i / Math.max(values.length - 1, 1)) * w;
-        const y = h - (v / (max || 1)) * h;
-        return <circle key={i} cx={x} cy={y} r={2.5} fill="#f97316" />;
+        const x = (i / (values.length - 1)) * W;
+        const y = H - (v / (max || 1)) * H;
+        return <circle key={i} cx={x} cy={y} r={2.5} fill={colour} />;
       })}
     </svg>
   );
 }
 
-export default function ProgressDashboardPage() {
-  const sessions  = getLocalSessions();
-  const skills    = getLocalSkills();
+// ── main component ────────────────────────────────────────────────────────────
 
-  const totalSecs = useMemo(
-    () => sessions.reduce((a, s) => a + s.drill_logs.reduce((b, l) => b + l.duration_actual_secs, 0), 0),
-    [sessions],
-  );
-  const avgFocus = useMemo(
-    () => sessions.length ? Math.round(sessions.reduce((a, s) => a + s.focus_score, 0) / sessions.length) : 0,
-    [sessions],
-  );
-  const streakDays = useMemo(() => {
-    if (sessions.length === 0) return 0;
-    const days = [...new Set(sessions.map(s => s.started_at.slice(0, 10)))].sort().reverse();
-    const today = new Date().toISOString().slice(0, 10);
-    let streak = 0;
-    let cursor = new Date(today);
-    for (const day of days) {
-      const d = cursor.toISOString().slice(0, 10);
-      if (day === d) { streak++; cursor.setDate(cursor.getDate() - 1); }
-      else break;
+export default function ProgressDashboardPage() {
+  const sessions       = getShadowSessions();
+  const vault          = getVaultEntries();
+  const streaks        = getStreaks();
+  const currentStreak  = getCurrentStreak();
+  const totalMinutes   = getTotalShadowMinutes();
+  const totalSentences = getTotalSentencesShadowed();
+
+  // ── per-anime stats ──────────────────────────────────────────────────────
+  const animeStats = useMemo(() => {
+    const map = new Map<string, { sessions: number; sentences: number; minutes: number; ratings: number[] }>();
+    for (const s of sessions) {
+      if (!map.has(s.anime_id)) map.set(s.anime_id, { sessions: 0, sentences: 0, minutes: 0, ratings: [] });
+      const rec = map.get(s.anime_id)!;
+      rec.sessions++;
+      rec.sentences += s.sentences_completed;
+      if (s.ended_at) {
+        rec.minutes += Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60000);
+      }
+      if (s.self_rating) rec.ratings.push(s.self_rating);
     }
-    return streak;
+    return [...map.entries()].map(([id, rec]) => ({
+      id,
+      anime: ANIME_LIBRARY.find(a => a.id === id),
+      ...rec,
+      avgRating: rec.ratings.length
+        ? (rec.ratings.reduce((a, b) => a + b, 0) / rec.ratings.length).toFixed(1)
+        : null,
+    })).sort((a, b) => b.sentences - a.sentences);
   }, [sessions]);
 
-  // Per-skill stats
-  const skillStats = useMemo(() => {
-    return skills.map(skill => {
-      const ss = sessions.filter(s => s.skill_id === skill.id);
-      const allZones = ss.flatMap(s => s.drill_logs.flatMap(l => l.zone_ratings));
-      const zoneCount = {
-        comfort:  allZones.filter(z => z === 'comfort').length,
-        learning: allZones.filter(z => z === 'learning').length,
-        panic:    allZones.filter(z => z === 'panic').length,
-      };
-      const totalZones = allZones.length || 1;
-      const focusScores = ss.map(s => s.focus_score);
-      const mins = Math.round(ss.reduce((a, s) => a + s.drill_logs.reduce((b, l) => b + l.duration_actual_secs, 0), 0) / 60);
-      return { skill, sessionCount: ss.length, focusScores, zoneCount, totalZones, mins };
-    }).filter(x => x.sessionCount > 0);
-  }, [skills, sessions]);
-
-  // Focus score trend (last 10 sessions)
-  const focusTrend = useMemo(
-    () => [...sessions].reverse().slice(0, 10).map(s => s.focus_score),
-    [sessions],
+  // ── self-rating trend (last 10 sessions with ratings) ────────────────────
+  const ratingTrend = useMemo(() =>
+    sessions.filter(s => s.self_rating).slice(0, 10).reverse().map(s => s.self_rating as number),
+    [sessions]
   );
 
-  // Recent sessions (last 5)
-  const recent = sessions.slice(0, 5);
+  // ── sentences per day (last 14 days) — for bar chart ────────────────────
+  const last14 = useMemo(() => {
+    const today = new Date();
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (13 - i));
+      const dateStr = d.toISOString().split('T')[0];
+      const streak  = streaks.find(s => s.date === dateStr);
+      return {
+        date:      dateStr,
+        label:     `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`,
+        sentences: streak?.sentences_shadowed ?? 0,
+        minutes:   streak?.minutes_practiced  ?? 0,
+        active:    !!(streak && streak.sentences_shadowed > 0),
+      };
+    });
+  }, [streaks]);
+
+  const maxSentences = Math.max(...last14.map(d => d.sentences), 1);
+
+  // ── vault tag breakdown ──────────────────────────────────────────────────
+  const tagStats = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of vault) {
+      for (const t of e.tags) map.set(t, (map.get(t) ?? 0) + 1);
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  }, [vault]);
+
+  // ── mode breakdown ───────────────────────────────────────────────────────
+  const modeCounts = useMemo(() => {
+    const m = { watch: 0, shadow: 0, dictation: 0 };
+    for (const s of sessions) m[s.mode] = (m[s.mode] ?? 0) + 1;
+    return m;
+  }, [sessions]);
 
   if (sessions.length === 0) {
     return (
       <div className="text-center py-20 space-y-4">
         <p className="text-5xl">📊</p>
         <p className="font-bold">No data yet</p>
-        <p className="text-gray-400 text-sm">Complete your first session to see your progress dashboard.</p>
-        <Link to="/session" className="inline-block bg-orange-500 hover:bg-orange-400 text-white text-sm font-semibold px-4 py-2 rounded-lg">Start a Session</Link>
+        <p className="text-gray-400 text-sm">Complete your first shadowing session to see progress here.</p>
+        <Link to="/session" className="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          Start Shadowing
+        </Link>
       </div>
     );
   }
@@ -114,147 +127,166 @@ export default function ProgressDashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-black">📊 Progress</h1>
-        <Link to="/session" className="text-sm bg-orange-500 hover:bg-orange-400 text-white px-3 py-1.5 rounded-lg font-semibold">+ Session</Link>
+        <Link to="/session" className="text-sm bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
+          + Session
+        </Link>
       </div>
 
       {/* Top stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard emoji="🔥" value={sessions.length}            label="Sessions" />
-        <StatCard emoji="⏱"  value={`${Math.floor(totalSecs / 60)}m`} label="Total Time" />
-        <StatCard emoji="🟡" value={`${avgFocus}%`}            label="Avg Focus" />
-        <StatCard emoji="📅" value={`${streakDays}d`}          label="Streak" />
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard emoji="🔥" value={`${currentStreak}d`}     label="Current Streak" />
+        <StatCard emoji="🗣️" value={totalSentences}       label="Sentences Shadowed" />
+        <StatCard emoji="⏱"  value={`${totalMinutes}m`}   label="Total Practice" />
+        <StatCard emoji="📚" value={vault.length}          label="Vault Entries" />
       </div>
 
-      {/* Focus score trend chart */}
-      {focusTrend.length >= 2 && (
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4">
-          <p className="text-xs font-bold uppercase tracking-widest text-orange-400 mb-3">Focus Score Trend (last {focusTrend.length} sessions)</p>
-          <div className="flex items-end gap-1">
-            {focusTrend.map((score, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <span className="text-xs text-gray-500">{score}%</span>
+      {/* Activity bar chart — last 14 days */}
+      <section className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Daily Activity (last 14 days)</p>
+        <div className="flex items-end gap-1 h-16">
+          {last14.map(day => (
+            <div key={day.date} className="flex-1 flex flex-col items-center gap-0.5">
+              <div
+                className={`w-full rounded-t transition-all ${
+                  day.active ? 'bg-indigo-500' : 'bg-gray-800'
+                }`}
+                style={{ height: day.sentences > 0 ? `${Math.max((day.sentences / maxSentences) * 52, 6)}px` : '4px' }}
+                title={`${day.date}: ${day.sentences} sentences, ${day.minutes}min`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-xs text-gray-700">
+          <span>{last14[0].label}</span>
+          <span>Today</span>
+        </div>
+        <p className="text-xs text-gray-500">
+          {currentStreak > 0
+            ? `🔥 ${currentStreak}-day streak — keep going!`
+            : 'No streak yet — practice today to start one!'}
+        </p>
+      </section>
+
+      {/* Self-rating trend */}
+      {ratingTrend.length >= 2 && (
+        <section className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-2">
+          <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Self-Rating Trend</p>
+          <SparkLine values={ratingTrend} max={5} colour="#818cf8" />
+          <div className="flex justify-between text-xs text-gray-600">
+            <span>older</span>
+            <span>
+              {ratingTrend[ratingTrend.length - 1] > ratingTrend[0]
+                ? '📈 Improving'
+                : ratingTrend[ratingTrend.length - 1] < ratingTrend[0]
+                ? '📉 Harder lately — normal!'
+                : '➡️ Consistent'}
+            </span>
+            <span>latest</span>
+          </div>
+        </section>
+      )}
+
+      {/* Mode breakdown */}
+      <section className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Mode Breakdown</p>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {([
+            ['👀', 'Watch',     modeCounts.watch],
+            ['🗣️', 'Shadow',    modeCounts.shadow],
+            ['✏️', 'Dictation', modeCounts.dictation],
+          ] as const).map(([emoji, label, count]) => (
+            <div key={label} className="rounded-xl bg-gray-800 py-3">
+              <p className="text-xl">{emoji}</p>
+              <p className="text-lg font-black">{count}</p>
+              <p className="text-xs text-gray-500">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Per-anime breakdown */}
+      {animeStats.length > 0 && (
+        <section className="space-y-3">
+          <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Per-Anime Breakdown</p>
+          {animeStats.map(({ id, anime, sessions: sc, sentences, minutes, avgRating }) => (
+            <div key={id} className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{anime?.cover_emoji ?? '🎬'}</span>
+                  <div>
+                    <p className="font-bold text-sm">{anime?.title ?? id}</p>
+                    <p className="text-xs text-gray-500">{sc} session{sc !== 1 ? 's' : ''} · {minutes}min</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  {avgRating && <p className="text-xl font-black text-indigo-400">{avgRating}<span className="text-xs text-gray-500">/5</span></p>}
+                  <p className="text-xs text-gray-500">{sentences} shadowed</p>
+                </div>
+              </div>
+              {/* Sentences progress bar */}
+              <div className="w-full bg-gray-800 rounded-full h-1.5">
                 <div
-                  className={`w-full rounded-t-sm transition-all ${focusColour(score).replace('text-', 'bg-').replace('400', '500')}`}
-                  style={{ height: `${Math.max(score * 0.6, 4)}px` }}
+                  className="bg-indigo-500 h-1.5 rounded-full transition-all"
+                  style={{ width: `${Math.min((sentences / Math.max(totalSentences, 1)) * 100, 100)}%` }}
                 />
+              </div>
+              <p className="text-xs text-gray-600">{sentences} of {totalSentences} total sentences</p>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Vault tag breakdown */}
+      {tagStats.length > 0 && (
+        <section className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Top Vault Tags</p>
+            <Link to="/vault" className="text-xs text-gray-500 hover:text-white">View all →</Link>
+          </div>
+          <div className="space-y-2">
+            {tagStats.map(([tag, count]) => (
+              <div key={tag} className="flex items-center gap-3">
+                <span className="text-xs text-gray-300 w-24 truncate">{tag}</span>
+                <div className="flex-1 bg-gray-800 rounded-full h-2">
+                  <div
+                    className="bg-indigo-500 h-2 rounded-full"
+                    style={{ width: `${(count / (tagStats[0][1] || 1)) * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 w-6 text-right">{count}</span>
               </div>
             ))}
           </div>
-          <div className="flex justify-between text-xs text-gray-700 mt-1">
-            <span>oldest</span><span>latest</span>
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            {sparkLine(focusTrend, 100)}
-            <p className="text-xs text-gray-500">
-              {focusTrend[focusTrend.length - 1] > focusTrend[0]
-                ? '📈 Focus improving'
-                : focusTrend[focusTrend.length - 1] < focusTrend[0]
-                ? '📉 Focus declining — try adjusting drill difficulty'
-                : '➡️ Focus holding steady'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Per-skill breakdown */}
-      {skillStats.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Per-Skill Breakdown</p>
-          {skillStats.map(({ skill, sessionCount, focusScores, zoneCount, totalZones, mins }) => {
-            const avgSkillFocus = focusScores.length
-              ? Math.round(focusScores.reduce((a, b) => a + b, 0) / focusScores.length)
-              : 0;
-            return (
-              <div key={skill.id} className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{skill.icon}</span>
-                    <div>
-                      <p className="font-bold text-sm">{skill.name}</p>
-                      <p className="text-xs text-gray-500">{sessionCount} session{sessionCount !== 1 ? 's' : ''} · {mins}m</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-2xl font-black ${focusColour(avgSkillFocus)}`}>{avgSkillFocus}%</p>
-                    <p className="text-xs text-gray-600">avg focus</p>
-                  </div>
-                </div>
-
-                {/* Zone distribution bar */}
-                <div>
-                  <p className="text-xs text-gray-600 mb-1">Zone distribution</p>
-                  <div className="flex rounded-full overflow-hidden h-3">
-                    {(['comfort', 'learning', 'panic'] as const).map(z => (
-                      <div
-                        key={z}
-                        className={ZONE_COLOUR[z]}
-                        style={{ width: `${(zoneCount[z] / totalZones) * 100}%` }}
-                        title={`${z}: ${zoneCount[z]}`}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex gap-3 mt-1">
-                    {(['comfort', 'learning', 'panic'] as const).map(z => (
-                      <span key={z} className="text-xs text-gray-600">
-                        {z === 'comfort' ? '🟢' : z === 'learning' ? '🟡' : '🔴'} {Math.round((zoneCount[z] / totalZones) * 100)}%
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Mini focus sparkline */}
-                {focusScores.length >= 2 && (
-                  <div className="flex items-center gap-2">
-                    {sparkLine(focusScores, 100)}
-                    <span className="text-xs text-gray-600">focus trend</span>
-                  </div>
-                )}
-
-                <Link
-                  to={`/skills/${skill.id}`}
-                  className="block text-center text-xs text-orange-400 hover:text-orange-300 border border-orange-900/40 rounded-lg py-1.5 transition-colors"
-                >
-                  View Drills & AI Suggestions →
-                </Link>
-              </div>
-            );
-          })}
-        </div>
+        </section>
       )}
 
       {/* Recent sessions */}
-      <div className="space-y-2">
+      <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Recent Sessions</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Recent Sessions</p>
           <Link to="/session/history" className="text-xs text-gray-500 hover:text-white">View all →</Link>
         </div>
-        {recent.map(s => {
-          const totalS = s.drill_logs.reduce((a, l) => a + l.duration_actual_secs, 0);
+        {sessions.slice(0, 5).map(s => {
+          const mins = s.ended_at
+            ? Math.max(1, Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60000))
+            : 0;
+          const anime = ANIME_LIBRARY.find(a => a.id === s.anime_id);
           return (
-            <div key={s.id} className="rounded-xl bg-gray-900 border border-gray-800 px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-xl">{s.skill_icon}</span>
-                <div>
-                  <p className="text-sm font-semibold">{s.skill_name}</p>
-                  <p className="text-xs text-gray-500">{formatDate(s.started_at)} · {Math.floor(totalS / 60)}m</p>
-                </div>
+            <div key={s.id} className="rounded-xl bg-gray-900 border border-gray-800 px-4 py-3 flex items-center gap-3">
+              <span className="text-xl">{anime?.cover_emoji ?? '🎬'}</span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold">{s.anime_title}</p>
+                <p className="text-xs text-gray-500">
+                  Ep.{s.episode_number} · {s.mode} · {mins}min · {s.sentences_completed} shadowed
+                </p>
               </div>
-              <div className="text-right">
-                <p className={`text-sm font-bold ${focusColour(s.focus_score)}`}>{s.focus_score}%</p>
-                <p className="text-xs text-gray-600">focus</p>
-              </div>
+              {s.self_rating && (
+                <span className="text-sm font-black text-indigo-400">{s.self_rating}/5</span>
+              )}
             </div>
           );
         })}
-      </div>
-
-      {/* Supabase sync banner */}
-      {!import.meta.env.VITE_SUPABASE_URL && (
-        <div className="rounded-2xl border border-dashed border-gray-700 p-4 text-center space-y-1">
-          <p className="text-xs font-bold text-gray-500">☁️ Cloud Sync not enabled</p>
-          <p className="text-xs text-gray-600">Add <code className="text-orange-400">VITE_SUPABASE_URL</code> + <code className="text-orange-400">VITE_SUPABASE_ANON_KEY</code> to your <code>.env</code> to sync across devices.</p>
-        </div>
-      )}
+      </section>
     </div>
   );
 }
