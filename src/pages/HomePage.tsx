@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom';
 import { getLocalSkills, getLocalMotivations, getLocalSessions } from '../lib/storage';
+import { isSupabaseAvailable } from '../lib/supabase';
+import { isGeminiAvailable } from '../lib/gemini';
 
 export default function HomePage() {
-  const skills = getLocalSkills();
+  const skills      = getLocalSkills();
   const motivations = getLocalMotivations();
-  const sessions = getLocalSessions();
-  const totalMin = Math.round(
+  const sessions    = getLocalSessions();
+  const totalMin    = Math.round(
     sessions.reduce((a, s) => a + s.drill_logs.reduce((b, l) => b + l.duration_actual_secs, 0), 0) / 60
   );
 
@@ -28,7 +30,7 @@ export default function HomePage() {
         <StatCard value={motivations.length} label="Fire Stmts"  emoji="❤️‍🔥" />
       </section>
 
-      {/* Primary CTA */}
+      {/* Primary CTAs */}
       <section className="grid gap-3">
         <Link to="/session" className="group block rounded-2xl bg-gradient-to-br from-orange-600 to-orange-800 p-5 hover:from-orange-500 hover:to-orange-700 transition-all">
           <div className="flex items-center justify-between">
@@ -42,16 +44,35 @@ export default function HomePage() {
         </Link>
 
         <div className="grid grid-cols-2 gap-3">
-          <Link to="/templates" className="rounded-2xl bg-gray-800 p-4 hover:bg-gray-700 transition-colors">
-            <span className="text-3xl block mb-2">📚</span>
-            <h3 className="font-bold text-sm">Templates</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Pre-built drill trees</p>
+          <Link to="/progress" className="rounded-2xl bg-gray-800 p-4 hover:bg-gray-700 transition-colors">
+            <span className="text-3xl block mb-2">📊</span>
+            <h3 className="font-bold text-sm">Progress</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Focus trends & zone data</p>
           </Link>
           <Link to="/session/history" className="rounded-2xl bg-gray-800 p-4 hover:bg-gray-700 transition-colors">
             <span className="text-3xl block mb-2">📋</span>
             <h3 className="font-bold text-sm">History</h3>
             <p className="text-xs text-gray-400 mt-0.5">{sessions.length} session{sessions.length !== 1 ? 's' : ''} logged</p>
           </Link>
+        </div>
+      </section>
+
+      {/* Integration status */}
+      <section className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Integrations</p>
+        <div className="space-y-1.5">
+          <IntegrationRow
+            emoji="☁️"
+            label="Supabase Sync"
+            active={isSupabaseAvailable()}
+            hint="Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to .env"
+          />
+          <IntegrationRow
+            emoji="✨"
+            label="Gemini AI Drills"
+            active={isGeminiAvailable()}
+            hint="Add VITE_GEMINI_API_KEY to .env"
+          />
         </div>
       </section>
 
@@ -81,6 +102,21 @@ function StatCard({ value, label, emoji }: { value: number; label: string; emoji
         <p className="text-2xl font-black">{value}</p>
         <p className="text-xs text-gray-400">{label}</p>
       </div>
+    </div>
+  );
+}
+
+function IntegrationRow({
+  emoji, label, active, hint,
+}: { emoji: string; label: string; active: boolean; hint: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-lg">{emoji}</span>
+      <span className="text-sm flex-1">{label}</span>
+      {active
+        ? <span className="text-xs bg-green-900/50 text-green-400 border border-green-800 px-2 py-0.5 rounded-full font-semibold">Active</span>
+        : <span className="text-xs text-gray-600" title={hint}>Not set</span>
+      }
     </div>
   );
 }

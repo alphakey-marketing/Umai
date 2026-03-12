@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { getLocalSkills, saveLocalSession } from '../lib/storage';
+import { syncSessionSave } from '../lib/sync';
 import type { Session, DrillLog, ZoneRating } from '../types';
 
 const REFLECT_PROMPTS = [
@@ -37,12 +38,14 @@ export default function SessionFeedbackPage() {
   const [rating, setRating] = useState<1|2|3|4|5>(3);
   const [wentWell, setWentWell] = useState('');
   const [improveNext, setImproveNext] = useState('');
+  const [saving, setSaving] = useState(false);
   const [prompt] = useState(
     () => REFLECT_PROMPTS[Math.floor(Math.random() * REFLECT_PROMPTS.length)]
   );
 
-  function handleSave() {
+  async function handleSave() {
     if (!skill) return;
+    setSaving(true);
     const session: Session = {
       id: makeId(),
       user_id: 'guest',
@@ -58,6 +61,8 @@ export default function SessionFeedbackPage() {
       focus_score: focusScore,
     };
     saveLocalSession(session);
+    await syncSessionSave(session).catch(() => {}); // fire-and-forget
+    setSaving(false);
     navigate('/session/history', { replace: true });
   }
 
@@ -72,14 +77,12 @@ export default function SessionFeedbackPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="text-center space-y-2 pt-2">
         <p className="text-5xl">🎉</p>
         <h1 className="text-2xl font-black">Session Complete!</h1>
         <p className="text-gray-400 text-sm">{skill.icon} {skill.name} · {totalMin}m {totalSecs % 60}s</p>
       </div>
 
-      {/* Focus score card */}
       <div className={`rounded-2xl p-5 text-center ${
         focusScore >= 70 ? 'bg-yellow-950/40 border border-yellow-700' :
         focusScore >= 40 ? 'bg-orange-950/40 border border-orange-800' :
@@ -89,13 +92,10 @@ export default function SessionFeedbackPage() {
         <p className="text-sm font-semibold mt-1">Focus Score (time in 🟡 learning zone)</p>
         {focusScore >= 70 && <p className="text-yellow-300 text-sm mt-2">🔥 You were in the zone today!</p>}
         {focusScore < 40 && focusScore > 0 && (
-          <p className="text-gray-400 text-xs mt-2">
-            Try adjusting drill difficulty next session to stay in the learning zone.
-          </p>
+          <p className="text-gray-400 text-xs mt-2">Try adjusting drill difficulty next session to stay in the learning zone.</p>
         )}
       </div>
 
-      {/* Zone breakdown */}
       {(drillLogs ?? []).length > 0 && (
         <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-2">
           <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Drill Breakdown</p>
@@ -112,50 +112,32 @@ export default function SessionFeedbackPage() {
         </div>
       )}
 
-      {/* Star rating */}
       <div className="space-y-2">
         <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Overall Session Rating</p>
         <div className="flex gap-2 justify-center">
           {([1,2,3,4,5] as const).map(n => (
-            <button
-              key={n}
-              onClick={() => setRating(n)}
-              className={`text-3xl transition-transform hover:scale-125 ${
-                n <= rating ? 'text-orange-400' : 'text-gray-700'
-              }`}
-            >
+            <button key={n} onClick={() => setRating(n)}
+              className={`text-3xl transition-transform hover:scale-125 ${n <= rating ? 'text-orange-400' : 'text-gray-700'}`}>
               ★
             </button>
           ))}
         </div>
       </div>
 
-      {/* Reflection */}
       <div className="space-y-3">
         <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Reflect</p>
         <p className="text-sm text-gray-400 italic">{prompt}</p>
-        <textarea
-          value={wentWell}
-          onChange={e => setWentWell(e.target.value)}
-          placeholder="What went well?"
-          rows={2}
-          className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:outline-none focus:border-orange-500 resize-none"
-        />
-        <textarea
-          value={improveNext}
-          onChange={e => setImproveNext(e.target.value)}
-          placeholder="What will you improve next time?"
-          rows={2}
-          className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:outline-none focus:border-orange-500 resize-none"
-        />
+        <textarea value={wentWell} onChange={e => setWentWell(e.target.value)}
+          placeholder="What went well?" rows={2}
+          className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:outline-none focus:border-orange-500 resize-none" />
+        <textarea value={improveNext} onChange={e => setImproveNext(e.target.value)}
+          placeholder="What will you improve next time?" rows={2}
+          className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:outline-none focus:border-orange-500 resize-none" />
       </div>
 
-      {/* Save */}
-      <button
-        onClick={handleSave}
-        className="w-full bg-orange-500 hover:bg-orange-400 text-white font-bold py-4 rounded-2xl transition-colors"
-      >
-        Save Session & View History
+      <button onClick={handleSave} disabled={saving}
+        className="w-full bg-orange-500 hover:bg-orange-400 disabled:opacity-60 text-white font-bold py-4 rounded-2xl transition-colors">
+        {saving ? 'Saving…' : 'Save Session & View History'}
       </button>
     </div>
   );

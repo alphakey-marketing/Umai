@@ -62,7 +62,18 @@ export interface Session {
   overall_rating: 1 | 2 | 3 | 4 | 5;
   went_well: string;
   improve_next: string;
-  focus_score: number; // % of zone_ratings that are 'learning'
+  focus_score: number;
+}
+
+// ─── AI suggestion types (Phase 3) ───────────────────────────────────────
+
+export interface AIDrillSuggestion {
+  name: string;
+  description: string;
+  duration_secs: number;
+  target_reps: number;
+  difficulty: 1 | 2 | 3 | 4 | 5;
+  reasoning: string;
 }
 
 // ─── Skill template (public, pre-seeded) ─────────────────────────────────

@@ -1,13 +1,16 @@
-import { createClient } from '@supabase/supabase-js';
+/**
+ * Supabase client — only initialised when env vars are present.
+ * In guest/offline mode, `supabase` is null and all callers fall back to localStorage.
+ */
 
-// Set these in a .env file:
-// VITE_SUPABASE_URL=https://xxxx.supabase.co
-// VITE_SUPABASE_ANON_KEY=your-anon-key
-const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL  as string;
-const supabaseKey  = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-export const supabase = (supabaseUrl && supabaseKey)
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
+const url  = import.meta.env.VITE_SUPABASE_URL  as string | undefined;
+const key  = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-export const isSupabaseReady = !!supabase;
+export const supabase: SupabaseClient | null =
+  url && key ? createClient(url, key) : null;
+
+export function isSupabaseAvailable(): boolean {
+  return supabase !== null;
+}

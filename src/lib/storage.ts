@@ -1,6 +1,6 @@
 /**
  * Offline-first localStorage helpers.
- * When Supabase is available and user is logged in, data is synced there.
+ * When Supabase is wired up, data is mirrored there.
  * In guest mode everything lives here.
  */
 
@@ -80,7 +80,7 @@ export function saveLocalSession(session: Session): void {
   const all = getLocalSessions();
   const idx = all.findIndex(s => s.id === session.id);
   if (idx >= 0) all[idx] = session;
-  else all.unshift(session); // newest first
+  else all.unshift(session);
   write(KEYS.sessions, all);
 }
 

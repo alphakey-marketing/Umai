@@ -9,6 +9,7 @@ import SessionSetupPage from './pages/SessionSetupPage';
 import SessionRunPage from './pages/SessionRunPage';
 import SessionFeedbackPage from './pages/SessionFeedbackPage';
 import SessionHistoryPage from './pages/SessionHistoryPage';
+import ProgressDashboardPage from './pages/ProgressDashboardPage';
 import './App.css';
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<HomePage />} />
+          <Route path="/progress" element={<ProgressDashboardPage />} />
           <Route path="/templates" element={<TemplateLibraryPage />} />
           <Route path="/skills" element={<MySkillsPage />} />
           <Route path="/skills/:skillId" element={<SkillDetailPage />} />

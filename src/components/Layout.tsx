@@ -3,7 +3,7 @@ import { Outlet, NavLink } from 'react-router-dom';
 const navItems = [
   { to: '/',          label: 'Home',      emoji: '🏠' },
   { to: '/session',   label: 'Session',   emoji: '🔥' },
-  { to: '/templates', label: 'Templates', emoji: '📚' },
+  { to: '/progress',  label: 'Progress',  emoji: '📊' },
   { to: '/skills',    label: 'My Skills', emoji: '⚡' },
   { to: '/vault',     label: 'Vault',     emoji: '❤️‍🔥' },
 ];
