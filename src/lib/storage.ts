@@ -4,11 +4,12 @@
  * In guest mode everything lives here.
  */
 
-import type { Skill, Motivation } from '../types';
+import type { Skill, Motivation, Session } from '../types';
 
 const KEYS = {
   skills:      'umai_skills',
   motivations: 'umai_motivations',
+  sessions:    'umai_sessions',
   guestId:     'umai_guest_id',
 };
 
@@ -67,6 +68,24 @@ export function upsertLocalMotivation(m: Motivation): void {
 
 export function deleteLocalMotivation(id: string): void {
   saveLocalMotivations(getLocalMotivations().filter(m => m.id !== id));
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────
+
+export function getLocalSessions(): Session[] {
+  return read<Session[]>(KEYS.sessions, []);
+}
+
+export function saveLocalSession(session: Session): void {
+  const all = getLocalSessions();
+  const idx = all.findIndex(s => s.id === session.id);
+  if (idx >= 0) all[idx] = session;
+  else all.unshift(session); // newest first
+  write(KEYS.sessions, all);
+}
+
+export function getSessionsForSkill(skillId: string): Session[] {
+  return getLocalSessions().filter(s => s.skill_id === skillId);
 }
 
 // ── Guest ID ──────────────────────────────────────────────────────────────

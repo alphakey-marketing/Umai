@@ -38,6 +38,33 @@ export interface Motivation {
   created_at: string;
 }
 
+// ─── Session types (Phase 2) ──────────────────────────────────────────────
+
+export type ZoneRating = 'comfort' | 'learning' | 'panic';
+
+export interface DrillLog {
+  drill_id: string;
+  drill_name: string;
+  duration_actual_secs: number;
+  reps_completed: number;
+  zone_ratings: ZoneRating[];
+}
+
+export interface Session {
+  id: string;
+  user_id: string;
+  skill_id: string;
+  skill_name: string;
+  skill_icon: string;
+  started_at: string;
+  ended_at: string;
+  drill_logs: DrillLog[];
+  overall_rating: 1 | 2 | 3 | 4 | 5;
+  went_well: string;
+  improve_next: string;
+  focus_score: number; // % of zone_ratings that are 'learning'
+}
+
 // ─── Skill template (public, pre-seeded) ─────────────────────────────────
 
 export interface DrillTemplate {

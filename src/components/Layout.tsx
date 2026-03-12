@@ -2,6 +2,7 @@ import { Outlet, NavLink } from 'react-router-dom';
 
 const navItems = [
   { to: '/',          label: 'Home',      emoji: '🏠' },
+  { to: '/session',   label: 'Session',   emoji: '🔥' },
   { to: '/templates', label: 'Templates', emoji: '📚' },
   { to: '/skills',    label: 'My Skills', emoji: '⚡' },
   { to: '/vault',     label: 'Vault',     emoji: '❤️‍🔥' },
@@ -10,7 +11,6 @@ const navItems = [
 export default function Layout() {
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Top nav */}
       <header className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
         <span className="font-bold text-lg tracking-tight text-orange-400">うまい <span className="text-white text-sm font-normal">Umai</span></span>
         <nav className="hidden sm:flex gap-1">
@@ -33,12 +33,10 @@ export default function Layout() {
         </nav>
       </header>
 
-      {/* Page content */}
-      <main className="flex-1 px-4 py-6 max-w-3xl mx-auto w-full">
+      <main className="flex-1 px-4 py-6 max-w-3xl mx-auto w-full pb-24 sm:pb-6">
         <Outlet />
       </main>
 
-      {/* Bottom nav (mobile) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 bg-gray-900 border-t border-gray-800 flex justify-around py-2 z-50">
         {navItems.map(({ to, label, emoji }) => (
           <NavLink

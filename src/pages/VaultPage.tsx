@@ -4,6 +4,7 @@ import {
   upsertLocalMotivation,
   deleteLocalMotivation,
 } from '../lib/storage';
+import { PROVE_THEM_WRONG_PRESETS } from '../data/skillTemplates';
 import type { Motivation } from '../types';
 
 function makeId() {
@@ -11,10 +12,10 @@ function makeId() {
 }
 
 const CATEGORIES: { value: Motivation['category']; label: string; emoji: string }[] = [
-  { value: 'battle_cry',      label: 'Battle Cry',      emoji: '⚔️' },
-  { value: 'prove_them_wrong',label: 'Prove Them Wrong', emoji: '😤' },
-  { value: 'future_self',     label: 'Future Self',     emoji: '🌟' },
-  { value: 'why_i_started',   label: 'Why I Started',   emoji: '🌱' },
+  { value: 'battle_cry',       label: 'Battle Cry',       emoji: '⚔️' },
+  { value: 'prove_them_wrong', label: 'Prove Them Wrong',  emoji: '😤' },
+  { value: 'future_self',      label: 'Future Self',       emoji: '🌟' },
+  { value: 'why_i_started',    label: 'Why I Started',     emoji: '🌱' },
 ];
 
 export default function VaultPage() {
@@ -22,6 +23,7 @@ export default function VaultPage() {
   const [statement, setStatement] = useState('');
   const [category, setCategory] = useState<Motivation['category']>('battle_cry');
   const [filter, setFilter] = useState<Motivation['category'] | 'all'>('all');
+  const [showPresets, setShowPresets] = useState(false);
   const [rivalText, setRivalText] = useState(
     () => localStorage.getItem('umai_rival') ?? ''
   );
@@ -29,18 +31,19 @@ export default function VaultPage() {
 
   function refresh() { setMotivations(getLocalMotivations()); }
 
-  function handleAdd() {
-    if (!statement.trim()) return;
+  function handleAdd(text?: string) {
+    const s = (text ?? statement).trim();
+    if (!s) return;
     const m: Motivation = {
       id: makeId(),
       user_id: 'guest',
-      statement: statement.trim(),
+      statement: s,
       is_favourite: false,
-      category,
+      category: text ? 'prove_them_wrong' : category,
       created_at: new Date().toISOString(),
     };
     upsertLocalMotivation(m);
-    setStatement('');
+    if (!text) setStatement('');
     refresh();
   }
 
@@ -59,6 +62,7 @@ export default function VaultPage() {
     setEditingRival(false);
   }
 
+  const existingStatements = new Set(motivations.map(m => m.statement));
   const displayed = filter === 'all' ? motivations : motivations.filter(m => m.category === filter);
   const favourites = motivations.filter(m => m.is_favourite);
 
@@ -69,7 +73,7 @@ export default function VaultPage() {
         <p className="text-gray-400 text-sm mt-1">Your personal fire. Shown before every session. Speak it. Mean it.</p>
       </div>
 
-      {/* Rival Energy box */}
+      {/* Rival Energy */}
       <div className="rounded-2xl bg-gray-900 border border-red-900/60 p-4 space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-widest text-red-400">😤 Rival Energy — Private</p>
@@ -82,7 +86,7 @@ export default function VaultPage() {
             <textarea
               value={rivalText}
               onChange={e => setRivalText(e.target.value)}
-              placeholder="Who or what are you proving wrong? This stays on your device only."
+              placeholder="Who or what are you proving wrong? Stays on your device only."
               rows={2}
               className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:outline-none focus:border-red-500 resize-none"
             />
@@ -98,9 +102,45 @@ export default function VaultPage() {
         )}
       </div>
 
-      {/* Add statement */}
+      {/* Prove Them Wrong Presets — UAT Fix */}
       <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
-        <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Write a Fire Statement</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold uppercase tracking-widest text-orange-400">😤 Prove Them Wrong — Quick Pick</p>
+          <button
+            onClick={() => setShowPresets(!showPresets)}
+            className="text-xs text-gray-500 hover:text-white transition-colors"
+          >
+            {showPresets ? 'Hide ▲' : 'Show ▼'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500">Tap any statement to instantly add it to your vault.</p>
+        {showPresets && (
+          <div className="space-y-2">
+            {PROVE_THEM_WRONG_PRESETS.map(preset => {
+              const added = existingStatements.has(preset);
+              return (
+                <button
+                  key={preset}
+                  disabled={added}
+                  onClick={() => handleAdd(preset)}
+                  className={`w-full text-left text-sm px-3 py-2 rounded-xl border transition-all ${
+                    added
+                      ? 'border-orange-800/40 bg-orange-950/20 text-orange-300/50 cursor-default'
+                      : 'border-gray-700 bg-gray-800 hover:border-orange-500 hover:bg-orange-950/30 text-gray-200'
+                  }`}
+                >
+                  <span className="mr-2">{added ? '✓' : '+'}</span>
+                  {preset}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Write your own */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-widest text-orange-400">Write Your Own Fire Statement</p>
         <textarea
           value={statement}
           onChange={e => setStatement(e.target.value)}
@@ -124,7 +164,7 @@ export default function VaultPage() {
           ))}
         </div>
         <button
-          onClick={handleAdd}
+          onClick={() => handleAdd()}
           disabled={!statement.trim()}
           className="w-full bg-orange-500 hover:bg-orange-400 disabled:opacity-40 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
         >
@@ -135,7 +175,7 @@ export default function VaultPage() {
       {/* Filter tabs */}
       {motivations.length > 0 && (
         <div className="flex gap-1 flex-wrap">
-          {['all', ...CATEGORIES.map(c => c.value)].map(val => (
+          {(['all', ...CATEGORIES.map(c => c.value)] as const).map(val => (
             <button
               key={val}
               onClick={() => setFilter(val as typeof filter)}
@@ -145,13 +185,13 @@ export default function VaultPage() {
                   : 'bg-gray-800 text-gray-400 hover:text-white'
               }`}
             >
-              {val === 'all' ? '⚡ All' : (CATEGORIES.find(c=>c.value===val)?.emoji + ' ' + CATEGORIES.find(c=>c.value===val)?.label)}
+              {val === 'all' ? '⚡ All' : (CATEGORIES.find(c => c.value === val)?.emoji + ' ' + CATEGORIES.find(c => c.value === val)?.label)}
             </button>
           ))}
         </div>
       )}
 
-      {/* Favourites spotlight */}
+      {/* Starred spotlight */}
       {favourites.length > 0 && filter === 'all' && (
         <div className="rounded-2xl bg-gradient-to-br from-orange-950 to-gray-900 border border-orange-800/50 p-4 space-y-2">
           <p className="text-xs font-bold uppercase tracking-widest text-orange-400">⭐ Starred — Shown Before Sessions</p>

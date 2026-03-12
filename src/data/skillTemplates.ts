@@ -186,3 +186,19 @@ export const MOTIVATION_SEEDS: Record<string, string[]> = {
     "Discomfort during practice means I am growing.",
   ],
 };
+
+// ─── UAT Fix: Preset "Prove Them Wrong" statements ───────────────────────
+// Shown as quick-pick chips in the Vault so users don't have to write from scratch.
+
+export const PROVE_THEM_WRONG_PRESETS: string[] = [
+  "If my footwork is stable, those who want me to lose will be so shocked.",
+  "They said I couldn't. Every rep I do proves them wrong.",
+  "The people who doubted me are my best training partners.",
+  "I will show up so prepared that losing becomes their problem.",
+  "They underestimated me. That was their last mistake.",
+  "Every time they counted me out, I was in the gym counting reps.",
+  "My silence now will be my performance later.",
+  "I don't need to talk about it. My results will.",
+  "When I walk in fully prepared, doubt has no room to stand.",
+  "The day they see what I've become, they won't be able to look away.",
+];
