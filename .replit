@@ -1,4 +1,4 @@
-run = "npm run dev"
+run = "pnpm run dev"
 modules = ["nodejs-20"]
 hidden = [".config", "tsconfig.json", "tsconfig.node.json", "vite.config.js", ".gitignore"]
 entrypoint = "src/App.tsx"
@@ -11,7 +11,7 @@ language = "nodejs"
 
 [deployment]
 deploymentTarget = "static"
-build = ["npm", "run", "build"]
+build = ["pnpm", "run", "build"]
 publicDir = "dist"
 
 [[ports]]
