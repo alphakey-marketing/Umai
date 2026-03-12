@@ -2,15 +2,14 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ANIME_LIBRARY } from '../data/animeLibrary';
 import { parseSubtitleFile } from '../lib/subtitleParser';
-import { storeFile } from '../lib/sessionFileStore';
-import type { AnimeTitle, ShadowingMode, SubtitleLine } from '../types/index';
+import type { AnimeTitle, ShadowingMode, SubtitleLine } from '../types';
 
 export default function SessionSetupPage() {
-  const navigate   = useNavigate();
-  const [params]   = useSearchParams();
+  const navigate      = useNavigate();
+  const [params]      = useSearchParams();
 
-  const preAnimeId  = params.get('anime') ?? '';
-  const preEpisode  = parseInt(params.get('episode') ?? '1', 10);
+  const preAnimeId    = params.get('anime') ?? '';
+  const preEpisode    = parseInt(params.get('episode') ?? '1', 10);
 
   const [anime, setAnime]           = useState<AnimeTitle | null>(
     ANIME_LIBRARY.find(a => a.id === preAnimeId) ?? null
@@ -18,7 +17,7 @@ export default function SessionSetupPage() {
   const [episodeNum, setEpisodeNum] = useState(preEpisode || 1);
   const [mode, setMode]             = useState<ShadowingMode>('shadow');
   const [srtText, setSrtText]       = useState<string | null>(null);
-  const [srtName, setSrtName]       = useState('');
+  const [srtName, setSrtName]       = useState<string>('');
   const [videoFile, setVideoFile]   = useState<File | null>(null);
   const [error, setError]           = useState<string | null>(null);
 
@@ -28,7 +27,11 @@ export default function SessionSetupPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { setSrtText(ev.target?.result as string); setSrtName(file.name); setError(null); };
+    reader.onload = ev => {
+      setSrtText(ev.target?.result as string);
+      setSrtName(file.name);
+      setError(null);
+    };
     reader.readAsText(file, 'utf-8');
   }
 
@@ -52,31 +55,28 @@ export default function SessionSetupPage() {
           return;
         }
       } catch {
-        setError("Failed to parse subtitle file. Make sure it's a valid .srt or .vtt.");
+        setError('Failed to parse subtitle file. Make sure it\'s a valid .srt or .vtt file.');
         return;
       }
     }
 
-    // Store the File in the in-memory store and pass only the ID through state
-    // This avoids blob: URL revocation and structuredClone File-dropping issues
-    const videoFileId = storeFile(videoFile);
-    const episode     = anime.episodes.find(ep => ep.episode_number === episodeNum);
-
+    const episode = anime.episodes.find(ep => ep.episode_number === episodeNum);
     navigate('/session/run', {
       state: {
         anime,
         episode,
         mode,
         subtitleLines: parsedLines,
-        videoFileId,   // ← string ID only, not the File or a blob: URL
+        videoFile,                           // pass File directly for Transformers.js
+        videoObjectURL: URL.createObjectURL(videoFile),
       },
     });
   }
 
-  const MODES = [
-    { value: 'watch'     as ShadowingMode, label: 'Watch',     emoji: '👀', desc: 'Watch with Japanese subtitles' },
-    { value: 'shadow'    as ShadowingMode, label: 'Shadow',    emoji: '🗣️', desc: 'Auto-pause each line. Repeat aloud.' },
-    { value: 'dictation' as ShadowingMode, label: 'Dictation', emoji: '✏️', desc: 'Subtitles hidden. Guess then reveal.' },
+  const MODES: { value: ShadowingMode; label: string; desc: string; emoji: string }[] = [
+    { value: 'watch',     label: 'Watch',     emoji: '👀', desc: 'Watch with Japanese subtitles' },
+    { value: 'shadow',    label: 'Shadow',    emoji: '🗣️', desc: 'Auto-pause each line. Repeat aloud.' },
+    { value: 'dictation', label: 'Dictation', emoji: '✏️', desc: 'Subtitles hidden. Guess then reveal.' },
   ];
 
   return (
@@ -101,8 +101,11 @@ export default function SessionSetupPage() {
         ) : (
           <div className="grid gap-2 max-h-60 overflow-y-auto">
             {ANIME_LIBRARY.map(a => (
-              <button key={a.id} onClick={() => setAnime(a)}
-                className="flex items-center gap-3 rounded-xl bg-gray-800 hover:bg-gray-700 px-4 py-3 text-left transition-colors">
+              <button
+                key={a.id}
+                onClick={() => setAnime(a)}
+                className="flex items-center gap-3 rounded-xl bg-gray-800 hover:bg-gray-700 px-4 py-3 text-left transition-colors"
+              >
                 <span className="text-2xl">{a.cover_emoji}</span>
                 <div className="flex-1">
                   <p className="text-sm font-bold">{a.title}</p>
@@ -179,13 +182,22 @@ export default function SessionSetupPage() {
           </div>
           <input type="file" accept=".srt,.vtt,text/*" className="hidden" onChange={handleSRTUpload} />
         </label>
-        {!srtText && <p className="text-xs text-indigo-400 px-1">🧠 No SRT? Whisper runs in your browser — free, no API key needed.</p>}
+        {!srtText && (
+          <p className="text-xs text-indigo-400 px-1">
+            🧠 No SRT? Whisper runs in your browser — free, no API key needed.
+          </p>
+        )}
       </section>
 
-      {error && <p className="text-sm text-red-400 bg-red-950/30 border border-red-900 rounded-xl px-4 py-2">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-400 bg-red-950/30 border border-red-900 rounded-xl px-4 py-2">{error}</p>
+      )}
 
-      <button onClick={handleStart} disabled={!anime || !videoFile}
-        className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-base py-4 rounded-2xl transition-colors">
+      <button
+        onClick={handleStart}
+        disabled={!anime || !videoFile}
+        className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-base py-4 rounded-2xl transition-colors"
+      >
         ▶ Start Shadowing
       </button>
 
@@ -205,6 +217,8 @@ function JLPTBadge({ level }: { level: string }) {
     N1: 'bg-red-900/60 text-red-400 border-red-800',
   };
   return (
-    <span className={`text-xs border px-2 py-0.5 rounded-full font-bold ${colours[level] ?? ''}`}>{level}</span>
+    <span className={`text-xs border px-2 py-0.5 rounded-full font-bold ${colours[level] ?? ''}`}>
+      {level}
+    </span>
   );
 }
