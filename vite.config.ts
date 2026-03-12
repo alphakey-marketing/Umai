@@ -5,10 +5,17 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    // Exclude transformers.js from pre-bundling — it loads WASM internally
-    exclude: ['@xenova/transformers'],
+    // Exclude wasm packages from pre-bundling — they load WASM internally
+    exclude: ['@xenova/transformers', '@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
   worker: {
     format: 'es',
+  },
+  server: {
+    headers: {
+      // Required for SharedArrayBuffer used by ffmpeg.wasm
+      'Cross-Origin-Opener-Policy':   'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
   },
 });
