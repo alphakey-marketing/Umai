@@ -1,5 +1,5 @@
 /**
- * TranscribePanel — in-browser Whisper transcription with ffmpeg.wasm audio extraction.
+ * TranscribePanel — in-browser Whisper transcription.
  */
 import { useState, useCallback } from 'react';
 import {
@@ -15,7 +15,7 @@ interface Props {
   onResult: (lines: SubtitleLine[]) => void;
 }
 
-type Phase = 'idle' | 'loading-ffmpeg' | 'extracting' | 'loading-model' | 'transcribing' | 'done' | 'error';
+type Phase = 'idle' | 'loading' | 'transcribing' | 'done' | 'error';
 
 export default function TranscribePanel({ videoFile, onResult }: Props) {
   const { settings }            = useSettings();
@@ -27,25 +27,15 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
   const handleTranscribe = useCallback(async () => {
     if (!videoFile) return;
     setError(null);
-    setPhase('loading-ffmpeg');
+    setPhase('loading');
     setProgress(0);
-    setStatus('Loading ffmpeg (first time only)…');
+    setStatus('Loading Whisper model…');
 
     onTranscribeProgress((ev: TranscribeProgressEvent) => {
-      if (ev.status === 'extracting') {
-        setPhase(ev.progress === 0 ? 'loading-ffmpeg' : 'extracting');
-        setProgress(ev.progress ?? 0);
-        setStatus(
-          ev.progress !== undefined && ev.progress < 15
-            ? 'Loading ffmpeg.wasm (cached after first use)…'
-            : `Extracting audio — ${ev.progress ?? 0}%`
-        );
-      } else if (ev.status === 'initiate' || ev.status === 'download') {
-        setPhase('loading-model');
+      if (ev.status === 'initiate' || ev.status === 'download') {
         setStatus('Downloading Whisper model…');
         setProgress(0);
       } else if (ev.status === 'progress') {
-        setPhase('loading-model');
         setProgress(Math.round(ev.progress ?? 0));
         setStatus(`Downloading model — ${Math.round(ev.progress ?? 0)}%`);
       } else if (ev.status === 'done') {
@@ -119,13 +109,7 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
     );
   }
 
-  const showBar = phase === 'extracting' || phase === 'loading-ffmpeg' || (phase === 'loading-model' && progress > 0);
-  const hint = {
-    'loading-ffmpeg': '~31 MB, cached after first download — future runs are instant.',
-    'extracting':     'ffmpeg is demuxing and resampling your video…',
-    'loading-model':  'Whisper model cached after first download.',
-    'transcribing':   'Running speech recognition on extracted audio…',
-  }[phase] ?? '';
+  const showBar = phase === 'loading' && progress > 0;
 
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 space-y-3">
@@ -148,7 +132,6 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
           <div className="bg-indigo-500 h-2 rounded-full animate-pulse w-1/2" />
         </div>
       )}
-      {hint && <p className="text-xs text-gray-600">{hint}</p>}
     </div>
   );
 }
