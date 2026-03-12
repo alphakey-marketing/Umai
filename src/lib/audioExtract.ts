@@ -1,86 +1,95 @@
 /**
  * audioExtract.ts
  *
- * Extracts audio from a video File for Whisper transcription.
+ * Extracts a mono 16 kHz PCM Float32Array from ANY video file the user uploads.
  *
- * Strategy: fetch the File as an ArrayBuffer, try AudioContext.decodeAudioData
- * directly (works for mp4/aac on Chrome/Edge/Safari which ship a full demuxer).
- * If that fails (e.g. Firefox with some mp4 variants), fall back to an
- * OfflineAudioContext render via a MediaElementSource.
+ * Uses @ffmpeg/ffmpeg (wasm) which runs entirely in-browser with no server,
+ * no captureStream(), no AudioContext.decodeAudioData() on a video container.
+ * Works in sandboxed iframes (Replit preview), cross-origin frames, everywhere.
  *
- * This avoids captureStream() which is blocked in sandboxed iframes (Replit preview)
- * and requires user-gesture / non-muted playback in many browsers.
+ * Pipeline:
+ *   File  →  ffmpeg.wasm (demux + decode + resample to 16 kHz mono WAV)
+ *         →  AudioContext.decodeAudioData (WAV is always decodeable)
+ *         →  Float32Array PCM
  */
+
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
+
+let _ffmpeg: FFmpeg | null = null;
+
+async function getFFmpeg(onProgress?: (pct: number) => void): Promise<FFmpeg> {
+  if (_ffmpeg?.loaded) return _ffmpeg;
+  _ffmpeg = new FFmpeg();
+
+  // Load ffmpeg core from CDN (cached by browser after first load, ~31 MB)
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  _ffmpeg.on('progress', ({ progress }) => {
+    // ffmpeg processing progress (0-1)
+    onProgress?.(10 + Math.round(progress * 70));
+  });
+
+  await _ffmpeg.load({
+    coreURL:   await toBlobURL(`${baseURL}/ffmpeg-core.js`,   'text/javascript'),
+    wasmURL:   await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+  });
+
+  return _ffmpeg;
+}
 
 export async function extractAudioFromVideo(
   videoFile: File,
   onProgress?: (pct: number) => void
 ): Promise<{ pcm: Float32Array; sampleRate: number }> {
-  onProgress?.(5);
-
   const TARGET_RATE = 16000;
 
-  // ── Strategy A: direct decodeAudioData ──────────────────────────────────
-  // Chrome, Edge and Safari can fully demux mp4/aac/mp3 inside AudioContext.
-  // This is the fastest path and works fine in sandboxed iframes.
-  try {
-    const arrayBuffer = await videoFile.arrayBuffer();
-    onProgress?.(30);
-    const ctx    = new AudioContext({ sampleRate: TARGET_RATE });
-    const audioBuf = await ctx.decodeAudioData(arrayBuffer.slice(0));
-    ctx.close();
-    onProgress?.(90);
-    return { pcm: toMono(audioBuf), sampleRate: TARGET_RATE };
-  } catch (_directErr) {
-    // Strategy A failed — fall through to B
-  }
+  onProgress?.(2);
 
-  // ── Strategy B: MediaElement + Web Audio offline render ─────────────────
-  // Creates a real <audio> element (not <video>) which the browser decodes
-  // natively, then renders offline via OfflineAudioContext.
-  // Works in Firefox for mp4 when direct decoding fails.
-  onProgress?.(35);
-  return new Promise((resolve, reject) => {
-    const objectURL = URL.createObjectURL(videoFile);
-    const audioEl   = document.createElement('audio');
-    audioEl.preload = 'auto';
-    audioEl.src     = objectURL;
+  // 1. Load ffmpeg.wasm (cached after first use)
+  const ffmpeg = await getFFmpeg(onProgress);
+  onProgress?.(10);
 
-    audioEl.onerror = () => {
-      URL.revokeObjectURL(objectURL);
-      reject(new Error(
-        'Browser cannot decode this file\'s audio track. ' +
-        'Try re-encoding to mp4 (H.264 + AAC) or webm (VP9 + Opus).'
-      ));
-    };
+  // 2. Write the input file into ffmpeg's virtual FS
+  const inputName  = 'input' + getExtension(videoFile.name);
+  const outputName = 'audio.wav';
+  await ffmpeg.writeFile(inputName, await fetchFile(videoFile));
+  onProgress?.(20);
 
-    audioEl.onloadedmetadata = async () => {
-      try {
-        const duration    = audioEl.duration;              // seconds
-        const numSamples  = Math.ceil(duration * TARGET_RATE);
-        const offlineCtx  = new OfflineAudioContext(1, numSamples, TARGET_RATE);
+  // 3. Extract + resample to 16 kHz mono WAV
+  await ffmpeg.exec([
+    '-i', inputName,
+    '-vn',                   // drop video track
+    '-acodec', 'pcm_s16le',  // raw PCM
+    '-ar', String(TARGET_RATE),
+    '-ac', '1',              // mono
+    outputName,
+  ]);
+  onProgress?.(85);
 
-        const source = offlineCtx.createMediaElementSource(audioEl);
-        source.connect(offlineCtx.destination);
+  // 4. Read the output WAV
+  const wavData = await ffmpeg.readFile(outputName) as Uint8Array;
 
-        // Render progress: poll via oncomplete isn't incremental, so just
-        // fire a mid-point tick before startRendering.
-        onProgress?.(50);
-        audioEl.play().catch(() => {/* ignore autoplay restriction — offlineCtx renders without it */});
-        const rendered = await offlineCtx.startRendering();
-        audioEl.pause();
-        URL.revokeObjectURL(objectURL);
-        onProgress?.(95);
-        resolve({ pcm: toMono(rendered), sampleRate: TARGET_RATE });
-      } catch (e) {
-        URL.revokeObjectURL(objectURL);
-        reject(e);
-      }
-    };
-  });
+  // 5. Clean up virtual FS
+  await ffmpeg.deleteFile(inputName);
+  await ffmpeg.deleteFile(outputName);
+  onProgress?.(90);
+
+  // 6. Decode WAV → AudioBuffer (WAV is always decodeable by AudioContext)
+  const audioCtx = new AudioContext({ sampleRate: TARGET_RATE });
+  const audioBuf = await audioCtx.decodeAudioData(wavData.buffer.slice(
+    wavData.byteOffset,
+    wavData.byteOffset + wavData.byteLength
+  ));
+  audioCtx.close();
+  onProgress?.(100);
+
+  return { pcm: toMono(audioBuf), sampleRate: TARGET_RATE };
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
+function getExtension(filename: string): string {
+  const m = filename.match(/\.[^.]+$/);
+  return m ? m[0] : '.mp4';
+}
 
 function toMono(buf: AudioBuffer): Float32Array {
   const numCh = buf.numberOfChannels;
