@@ -15,7 +15,7 @@ interface Props {
   onResult: (lines: SubtitleLine[]) => void;
 }
 
-type Phase = 'idle' | 'extracting' | 'loading-model' | 'transcribing' | 'done' | 'error';
+type Phase = 'idle' | 'decoding' | 'loading-model' | 'transcribing' | 'done' | 'error';
 
 export default function TranscribePanel({ videoFile, onResult }: Props) {
   const { settings }            = useSettings();
@@ -28,17 +28,19 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
   const handleTranscribe = useCallback(async () => {
     if (!videoFile) return;
     setError(null);
-    setPhase('extracting');
+    setPhase('decoding');
     setProgress(0);
-    setStatus('Extracting audio from video…');
-    setSubMsg('Playing video at 4× speed to capture audio');
+    setStatus('Reading audio from video…');
+    setSubMsg('Decoding audio track — please wait');
 
     onTranscribeProgress((ev: TranscribeProgressEvent) => {
-      if (ev.status === 'extracting') {
-        setPhase('extracting');
-        setProgress(ev.progress ?? 0);
-        setStatus(`Extracting audio — ${ev.progress ?? 0}%`);
-        setSubMsg('Playing video at 4× speed to capture audio…');
+      if (ev.status === 'decoding') {
+        setPhase('decoding');
+        setStatus('Decoding audio…');
+        setSubMsg('Extracting audio track from video');
+      } else if (ev.status === 'decoded') {
+        setStatus('Audio decoded ✓');
+        setSubMsg('Starting model download…');
       } else if (ev.status === 'initiate' || ev.status === 'download') {
         setPhase('loading-model');
         setProgress(0);
@@ -123,13 +125,14 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
     );
   }
 
-  const showPercent = phase === 'extracting' || phase === 'loading-model';
-  const barWidth    = phase === 'transcribing' ? 60 : Math.max(progress, 2);
-  const barAnimate  = phase === 'transcribing';
+  const showPercent = phase === 'loading-model';
+  const barWidth    = phase === 'transcribing' ? 60
+                    : phase === 'decoding'     ? 30
+                    : Math.max(progress, 2);
+  const barAnimate  = phase === 'transcribing' || phase === 'decoding';
 
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 space-y-3">
-      {/* Status row */}
       <div className="flex items-center gap-3">
         <span className="text-xl animate-spin shrink-0">⏳</span>
         <div className="flex-1 min-w-0">
@@ -141,7 +144,6 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
         )}
       </div>
 
-      {/* Progress bar */}
       <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
         <div
           className={`bg-indigo-500 h-2.5 rounded-full transition-all duration-300 ${
@@ -151,11 +153,10 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
         />
       </div>
 
-      {/* Phase hint */}
       <p className="text-xs text-gray-600">
-        {phase === 'extracting'    && 'Audio extraction — runs at 4× speed in background'}
+        {phase === 'decoding'      && 'Decoding audio inside browser — no upload needed'}
         {phase === 'loading-model' && 'Model cached after first download — future runs are instant'}
-        {phase === 'transcribing'  && 'Running speech recognition on extracted audio…'}
+        {phase === 'transcribing'  && 'Running speech recognition…'}
       </p>
     </div>
   );
