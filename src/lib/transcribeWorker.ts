@@ -5,23 +5,29 @@
  *
  * Message IN:  { type: 'transcribe', audioData: Float32Array, model: string }
  * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
+ *
+ * NOTE: We use dynamic import() instead of a static top-level import so that
+ * Vite does not attempt to bundle @xenova/transformers in iife worker format,
+ * which breaks ES module loading. Dynamic import() is left as-is by Vite.
  */
-import { pipeline, env } from '@xenova/transformers';
 import type { SubtitleLine } from '../types/index';
-
-env.allowLocalModels = false;
-env.useBrowserCache  = true;
 
 type WhisperChunk = { timestamp: [number, number | null]; text: string };
 
 let currentModel = '';
-let transcriber: Awaited<ReturnType<typeof pipeline>> | null = null;
+let transcriber: unknown = null;
 
 async function getTranscriber(model: string) {
   if (transcriber && currentModel === model) return transcriber;
   transcriber  = null;
   currentModel = model;
-  transcriber  = await pipeline(
+
+  // Dynamic import avoids Vite bundling @xenova/transformers in iife format
+  const { pipeline, env } = await import('@xenova/transformers');
+  env.allowLocalModels = false;
+  env.useBrowserCache  = true;
+
+  transcriber = await pipeline(
     'automatic-speech-recognition',
     model,
     {
@@ -47,7 +53,7 @@ self.onmessage = async (event: MessageEvent) => {
       throw new Error('Received empty audio data.');
     }
 
-    const pipe = await getTranscriber(model ?? 'Xenova/whisper-small');
+    const pipe = await getTranscriber(model ?? 'Xenova/whisper-small') as (input: Float32Array, opts: object) => Promise<{ chunks?: WhisperChunk[] }>;
     self.postMessage({ type: 'progress', data: { status: 'ready' } });
 
     const output = await pipe(audioData, {
@@ -56,7 +62,7 @@ self.onmessage = async (event: MessageEvent) => {
       return_timestamps: 'word',
       chunk_length_s: 30,
       stride_length_s: 5,
-    }) as { chunks?: WhisperChunk[] };
+    });
 
     const lines = chunksToSubtitleLines(output.chunks ?? []);
     self.postMessage({ type: 'result', lines });
