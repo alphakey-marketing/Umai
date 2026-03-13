@@ -5,12 +5,8 @@ import SubtitlePlayer from '../components/SubtitlePlayer';
 import TranscribePanel from '../components/TranscribePanel';
 import { saveShadowSession, recordTodayActivity } from '../lib/shadowStorage';
 import type {
-  AnimeTitle,
-  AnimeEpisode,
-  ShadowingMode,
-  SubtitleLine,
-  ShadowingSession,
-  VaultEntry,
+  AnimeTitle, AnimeEpisode, ShadowingMode,
+  SubtitleLine, ShadowingSession, VaultEntry,
 } from '../types';
 
 interface LocationState {
@@ -22,18 +18,23 @@ interface LocationState {
   videoObjectURL: string;
 }
 
+const SPEEDS = [0.6, 0.8, 1.0] as const;
+type Speed = typeof SPEEDS[number];
+
 export default function SessionRunPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const state    = location.state as LocationState | null;
 
-  const videoRef                              = useRef<HTMLVideoElement>(null);
-  const [currentMs, setCurrentMs]             = useState(0);
-  const [lines, setLines]                     = useState<SubtitleLine[]>(state?.subtitleLines ?? []);
-  const [transcribeDone, setTranscribeDone]   = useState((state?.subtitleLines ?? []).length > 0);
-  const [savedCount, setSavedCount]           = useState(0);
-  const [completedCount, setCompletedCount]   = useState(0);
-  const sessionStartRef                       = useRef(new Date().toISOString());
+  const videoRef                            = useRef<HTMLVideoElement>(null);
+  const [currentMs, setCurrentMs]           = useState(0);
+  const [lines, setLines]                   = useState<SubtitleLine[]>(state?.subtitleLines ?? []);
+  const [transcribeDone, setTranscribeDone] = useState((state?.subtitleLines ?? []).length > 0);
+  const [savedCount, setSavedCount]         = useState(0);
+  const [completedCount, setCompletedCount] = useState(0);
+  const [speed, setSpeed]                   = useState<Speed>(1.0);
+  const [videoEnded, setVideoEnded]         = useState(false);
+  const sessionStartRef                     = useRef(new Date().toISOString());
 
   if (!state?.anime) {
     return (
@@ -49,10 +50,8 @@ export default function SessionRunPage() {
 
   const { anime, episode, mode, videoObjectURL, videoFile } = state;
 
-  // Called by TranscribePanel on every partial AND final result
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
-    // Mark done only when called from the final result (phase === 'done' sets transcribeDone)
   }, []);
 
   const handleTranscribeDone = useCallback((result: SubtitleLine[]) => {
@@ -68,12 +67,10 @@ export default function SessionRunPage() {
     setSavedCount(c => c + 1);
   }, []);
 
-  function handleEnd() {
+  function commitSession() {
     const now     = new Date().toISOString();
     const startMs = new Date(sessionStartRef.current).getTime();
-    const endMs   = new Date(now).getTime();
-    const minutes = Math.round((endMs - startMs) / 60000);
-
+    const minutes = Math.round((Date.now() - startMs) / 60000);
     const session: ShadowingSession = {
       id:                  `shadow_${Date.now()}`,
       user_id:             'guest',
@@ -94,7 +91,11 @@ export default function SessionRunPage() {
     navigate('/session/feedback', { state: { session, savedCount, completedCount } });
   }
 
-  // Show subtitle player as soon as we have any lines (streaming or final)
+  // Video ended — show confirmation overlay instead of jumping away
+  function handleVideoEnded() {
+    setVideoEnded(true);
+  }
+
   const hasLines = lines.length > 0;
 
   return (
@@ -107,7 +108,7 @@ export default function SessionRunPage() {
           <p className="text-xs text-gray-400">Ep. {episode?.episode_number ?? 1} · {mode} mode</p>
         </div>
         <button
-          onClick={handleEnd}
+          onClick={commitSession}
           className="text-xs font-bold bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-full transition-colors"
         >
           End ✓
@@ -116,9 +117,9 @@ export default function SessionRunPage() {
 
       {/* Stats bar */}
       <div className="grid grid-cols-3 gap-2 text-center">
-        <MiniStat value={lines.length}    label="Lines" />
-        <MiniStat value={completedCount}  label="Shadowed" />
-        <MiniStat value={savedCount}      label="Saved" />
+        <MiniStat value={lines.length}   label="Lines" />
+        <MiniStat value={completedCount} label="Shadowed" />
+        <MiniStat value={savedCount}     label="Saved" />
       </div>
 
       {/* Video */}
@@ -126,10 +127,31 @@ export default function SessionRunPage() {
         ref={videoRef}
         src={videoObjectURL}
         onTimeUpdate={setCurrentMs}
-        onEnded={handleEnd}
+        onEnded={handleVideoEnded}
+        speed={speed}
       />
 
-      {/* TranscribePanel — shown until transcription is fully done */}
+      {/* Speed toggle */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500 font-semibold">Speed</span>
+        <div className="flex gap-1">
+          {SPEEDS.map(s => (
+            <button
+              key={s}
+              onClick={() => setSpeed(s)}
+              className={`text-xs font-bold px-3 py-1 rounded-full border transition-colors ${
+                speed === s
+                  ? 'bg-indigo-600 border-indigo-500 text-white'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+              }`}
+            >
+              {s === 1 ? '1×' : `${s}×`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Transcribe panel — visible until done */}
       {!transcribeDone && (
         <TranscribePanel
           videoFile={videoFile ?? null}
@@ -138,7 +160,7 @@ export default function SessionRunPage() {
         />
       )}
 
-      {/* Subtitle player — shown as soon as any lines exist (streaming-friendly) */}
+      {/* Subtitle player — appears as soon as first partial lines arrive */}
       {hasLines && (
         <SubtitlePlayer
           lines={lines}
@@ -153,12 +175,38 @@ export default function SessionRunPage() {
         />
       )}
 
+      {/* Video ended confirmation */}
+      {videoEnded && (
+        <div className="rounded-2xl bg-gray-900 border border-indigo-800 p-5 text-center space-y-3">
+          <p className="text-3xl">🎉</p>
+          <p className="font-black text-lg">Episode finished!</p>
+          <p className="text-sm text-gray-400">
+            You shadowed <span className="text-white font-bold">{completedCount}</span> lines
+            and saved <span className="text-white font-bold">{savedCount}</span> to vault.
+          </p>
+          <div className="flex gap-3 justify-center pt-1">
+            <button
+              onClick={() => { setVideoEnded(false); videoRef.current?.play(); }}
+              className="text-sm font-bold bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-4 py-2 rounded-xl transition-colors"
+            >
+              ↩ Keep watching
+            </button>
+            <button
+              onClick={commitSession}
+              className="text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl transition-colors"
+            >
+              Done ✓ See results
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Keyboard shortcuts */}
       <div className="rounded-xl bg-gray-900/50 border border-gray-800 px-4 py-3">
         <p className="text-xs font-bold uppercase tracking-widest text-gray-600 mb-2">Keyboard Shortcuts</p>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
           {([
-            ['Space', 'Play / Pause'],
+            ['Space', 'Pause / Resume'],
             ['R', 'Replay current line'],
             ['H', 'Hide / show subtitle'],
             ['S', 'Save line to vault'],

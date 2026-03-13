@@ -16,17 +16,8 @@ interface Props {
 }
 
 /**
- * Calculate how long to pause for shadowing a given line.
- *
- * Formula:
- *   pauseMs = lineDuration + max(charCount × 130ms, 2000ms) + 800ms
- *   capped at 12 000ms
- *
- * Rationale:
- *   - A learner repeats Japanese at ~7-8 chars/sec → 130ms/char
- *   - Minimum 2s even for very short lines
- *   - +800ms breathing room between lines
- *   - 12s cap prevents stalling on very long lines
+ * Pause duration for shadow mode.
+ * lineDuration + max(charCount × 130ms, 2000ms) + 800ms, capped at 12s.
  */
 function shadowPauseMs(line: SubtitleLine): number {
   const lineDuration = line.end_ms - line.start_ms;
@@ -36,42 +27,36 @@ function shadowPauseMs(line: SubtitleLine): number {
 }
 
 export default function SubtitlePlayer({
-  lines,
-  currentMs,
-  animeId,
-  animeName,
-  episodeNumber,
-  videoRef,
-  mode,
-  onSentenceComplete,
-  onSaved,
+  lines, currentMs, animeId, animeName, episodeNumber,
+  videoRef, mode, onSentenceComplete, onSaved,
 }: Props) {
-  const activeLine                        = getActiveLine(lines, currentMs);
-  const [hidden, setHidden]               = useState(mode === 'dictation');
-  const [savedId, setSavedId]             = useState<number | null>(null);
-  const [toast, setToast]                 = useState<string | null>(null);
-  const prevLineRef                       = useRef<SubtitleLine | null>(null);
-  const shadowPausedRef                   = useRef(false);
+  const activeLine          = getActiveLine(lines, currentMs);
+  const [hidden, setHidden] = useState(mode === 'dictation');
+  const [savedId, setSavedId]   = useState<number | null>(null);
+  const [toast, setToast]       = useState<string | null>(null);
+  const prevLineRef             = useRef<SubtitleLine | null>(null);
+  const shadowPausedRef         = useRef(false);
+  const resumeTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Shadow mode: auto-pause when a new line starts, resume after char-based pause
+  // Shadow mode: auto-pause on new line
   useEffect(() => {
     if (mode !== 'shadow') return;
     if (!activeLine) return;
     if (prevLineRef.current?.index === activeLine.index) return;
-
     prevLineRef.current = activeLine;
 
     if (videoRef.current && !shadowPausedRef.current) {
       videoRef.current.pause();
       shadowPausedRef.current = true;
 
-      const pauseFor = shadowPauseMs(activeLine);
+      // Clear any previous timer
+      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
 
-      setTimeout(() => {
+      resumeTimerRef.current = setTimeout(() => {
         if (videoRef.current) videoRef.current.play();
         shadowPausedRef.current = false;
         onSentenceComplete?.(activeLine);
-      }, pauseFor);
+      }, shadowPauseMs(activeLine));
     }
   }, [activeLine, mode, videoRef, onSentenceComplete]);
 
@@ -79,8 +64,27 @@ export default function SubtitlePlayer({
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
       switch (e.key.toLowerCase()) {
-        case 'h':          setHidden(h => !h); break;
+        case ' ':   // Space — manual pause/resume (backup for auto-pause)
+        case 'p': {
+          e.preventDefault();
+          if (!videoRef.current) break;
+          if (videoRef.current.paused) {
+            // If auto-timer is running, cancel it so user controls resume
+            if (resumeTimerRef.current) {
+              clearTimeout(resumeTimerRef.current);
+              resumeTimerRef.current = null;
+            }
+            shadowPausedRef.current = false;
+            videoRef.current.play();
+          } else {
+            videoRef.current.pause();
+            shadowPausedRef.current = true;
+          }
+          break;
+        }
+        case 'h': setHidden(h => !h); break;
         case 'r':
           if (activeLine && videoRef.current) {
             videoRef.current.currentTime = activeLine.start_ms / 1000;
@@ -100,7 +104,7 @@ export default function SubtitlePlayer({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeLine]);
+  }, [activeLine, videoRef]);
 
   function saveToVault(line: SubtitleLine) {
     if (savedId === line.index) return;
@@ -145,28 +149,25 @@ export default function SubtitlePlayer({
       )}
 
       <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 min-h-[80px] flex flex-col gap-3">
+        {/* Subtitle text */}
         <div className="text-center">
           {activeLine ? (
             hidden ? (
-              <button
-                onClick={() => setHidden(false)}
-                className="text-sm text-gray-500 italic underline"
-              >
+              <button onClick={() => setHidden(false)} className="text-sm text-gray-500 italic underline">
                 Tap to reveal subtitle
               </button>
             ) : (
-              <p className="text-lg font-bold leading-relaxed text-white">
-                {activeLine.text}
-              </p>
+              <p className="text-lg font-bold leading-relaxed text-white">{activeLine.text}</p>
             )
           ) : (
             <p className="text-sm text-gray-600 italic">...</p>
           )}
         </div>
 
+        {/* Controls */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
-            <ControlBtn onClick={replayLine}           title="Replay (R)"           emoji="🔁" />
+            <ControlBtn onClick={replayLine}          title="Replay (R)"           emoji="🔁" />
             <ControlBtn
               onClick={() => setHidden(h => !h)}
               title="Hide/show subtitle (H)"
@@ -189,16 +190,13 @@ export default function SubtitlePlayer({
           )}
         </div>
 
+        {/* Mode badge + hint */}
         <div className="flex items-center justify-between">
           <ModeBadge mode={mode} />
-          {/* Show pause duration hint in shadow mode */}
-          {mode === 'shadow' && activeLine && (
-            <p className="text-xs text-gray-600">
-              ⏱ {(shadowPauseMs(activeLine) / 1000).toFixed(1)}s to repeat
-            </p>
-          )}
-          {mode !== 'shadow' && (
-            <p className="text-xs text-gray-600">H · hide &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save</p>
+          {mode === 'shadow' && activeLine ? (
+            <p className="text-xs text-gray-600">⏱ {(shadowPauseMs(activeLine) / 1000).toFixed(1)}s · Space to pause/resume</p>
+          ) : (
+            <p className="text-xs text-gray-600">Space · pause &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save</p>
           )}
         </div>
       </div>
@@ -206,17 +204,14 @@ export default function SubtitlePlayer({
   );
 }
 
-function ControlBtn({
-  onClick, title, emoji, active = false,
-}: { onClick: () => void; title: string; emoji: string; active?: boolean }) {
+function ControlBtn({ onClick, title, emoji, active = false }: {
+  onClick: () => void; title: string; emoji: string; active?: boolean;
+}) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
+    <button onClick={onClick} title={title}
       className={`text-xl px-2 py-1 rounded-lg transition-colors ${
         active ? 'bg-indigo-900/50 text-indigo-300' : 'hover:bg-gray-800 text-gray-400'
-      }`}
-    >
+      }`}>
       {emoji}
     </button>
   );
@@ -224,14 +219,12 @@ function ControlBtn({
 
 function ModeBadge({ mode }: { mode: string }) {
   const styles: Record<string, string> = {
-    watch:     'bg-gray-800 text-gray-400',
-    shadow:    'bg-indigo-900/60 text-indigo-400',
+    watch: 'bg-gray-800 text-gray-400',
+    shadow: 'bg-indigo-900/60 text-indigo-400',
     dictation: 'bg-purple-900/60 text-purple-400',
   };
   const labels: Record<string, string> = {
-    watch:     '👀 Watch',
-    shadow:    '🗣️ Shadow',
-    dictation: '✏️ Dictation',
+    watch: '👀 Watch', shadow: '🗣️ Shadow', dictation: '✏️ Dictation',
   };
   return (
     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${styles[mode] ?? styles.watch}`}>
