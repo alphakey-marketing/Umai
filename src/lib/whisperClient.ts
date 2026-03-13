@@ -1,8 +1,7 @@
 /**
- * whisperClient.ts — sends File bytes to the Whisper worker.
- *
- * All audio decoding happens inside the worker via OfflineAudioContext —
- * no DOM access, no user-gesture requirement, no MediaElementSource conflicts.
+ * whisperClient.ts
+ * Decodes audio on the main thread (OfflineAudioContext works here),
+ * then transfers raw Float32Array PCM to the worker for Whisper inference.
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -29,15 +28,42 @@ export function onTranscribeProgress(cb: ProgressCallback): void {
   progressCb = cb;
 }
 
+/** Decode any audio/video file to mono 16kHz Float32Array on the main thread */
+async function decodeToMono16k(file: File): Promise<Float32Array> {
+  const arrayBuffer = await file.arrayBuffer();
+
+  // Decode at native sample rate first
+  const tmpCtx  = new AudioContext();
+  const decoded = await tmpCtx.decodeAudioData(arrayBuffer);
+  await tmpCtx.close();
+
+  const native       = decoded.sampleRate;
+  const frames       = decoded.length;
+  const targetRate   = 16000;
+  const targetFrames = Math.ceil(frames * (targetRate / native));
+
+  // Resample to 16kHz via OfflineAudioContext
+  const offCtx = new OfflineAudioContext(1, targetFrames, targetRate);
+  const src    = offCtx.createBufferSource();
+  src.buffer   = decoded;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const rendered = await offCtx.startRendering();
+  return rendered.getChannelData(0).slice(); // slice() to detach from AudioBuffer
+}
+
 export async function transcribeVideoFile(
   file: File,
   model = 'Xenova/whisper-small'
 ): Promise<SubtitleLine[]> {
-  const arrayBuffer = await file.arrayBuffer();
+  // Step 1: decode on main thread
+  progressCb?.({ status: 'decoding' });
+  const mono = await decodeToMono16k(file);
+  progressCb?.({ status: 'decoded' });
 
+  // Step 2: send PCM to worker for model download + inference
   return new Promise((resolve, reject) => {
     const w = getWorker();
-
     function onMessage(e: MessageEvent) {
       const { type, lines, data, message } = e.data;
       if (type === 'progress' && data) {
@@ -50,14 +76,13 @@ export async function transcribeVideoFile(
         reject(new Error(message ?? 'Transcription failed'));
       }
     }
-
     w.addEventListener('message', onMessage);
-    // Transfer the ArrayBuffer — zero-copy, avoids duplicating large video files
-    w.postMessage({ type: 'transcribe', arrayBuffer, model }, [arrayBuffer]);
+    // Transfer buffer zero-copy
+    w.postMessage({ type: 'transcribe', audioData: mono, model }, [mono.buffer]);
   });
 }
 
-/** For external SRT-less flows that already have a decoded AudioBuffer */
+/** For callers that already have a decoded AudioBuffer */
 export function transcribeAudioBuffer(
   audioBuffer: AudioBuffer,
   model = 'Xenova/whisper-small'
@@ -69,7 +94,6 @@ export function transcribeAudioBuffer(
     const ch_data = audioBuffer.getChannelData(ch);
     for (let i = 0; i < length; i++) mono[i] += ch_data[i] / numChannels;
   }
-
   return new Promise((resolve, reject) => {
     const w = getWorker();
     function onMessage(e: MessageEvent) {
@@ -79,7 +103,7 @@ export function transcribeAudioBuffer(
       else if (type === 'error')             { w.removeEventListener('message', onMessage); reject(new Error(message ?? 'Transcription failed')); }
     }
     w.addEventListener('message', onMessage);
-    w.postMessage({ type: 'transcribe', arrayBuffer: mono.buffer, model }, [mono.buffer]);
+    w.postMessage({ type: 'transcribe', audioData: mono, model }, [mono.buffer]);
   });
 }
 
