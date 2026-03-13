@@ -15,6 +15,26 @@ interface Props {
   onSaved?: (entry: VaultEntry) => void;
 }
 
+/**
+ * Calculate how long to pause for shadowing a given line.
+ *
+ * Formula:
+ *   pauseMs = lineDuration + max(charCount × 130ms, 2000ms) + 800ms
+ *   capped at 12 000ms
+ *
+ * Rationale:
+ *   - A learner repeats Japanese at ~7-8 chars/sec → 130ms/char
+ *   - Minimum 2s even for very short lines
+ *   - +800ms breathing room between lines
+ *   - 12s cap prevents stalling on very long lines
+ */
+function shadowPauseMs(line: SubtitleLine): number {
+  const lineDuration = line.end_ms - line.start_ms;
+  const charCount    = line.text.replace(/\s/g, '').length;
+  const repeatMs     = Math.max(charCount * 130, 2000);
+  return Math.min(lineDuration + repeatMs + 800, 12000);
+}
+
 export default function SubtitlePlayer({
   lines,
   currentMs,
@@ -26,14 +46,14 @@ export default function SubtitlePlayer({
   onSentenceComplete,
   onSaved,
 }: Props) {
-  const activeLine    = getActiveLine(lines, currentMs);
-  const [hidden, setHidden]       = useState(mode === 'dictation');
-  const [savedId, setSavedId]     = useState<number | null>(null);
-  const [toast, setToast]         = useState<string | null>(null);
-  const prevLineRef               = useRef<SubtitleLine | null>(null);
-  const shadowPausedRef           = useRef(false);
+  const activeLine                        = getActiveLine(lines, currentMs);
+  const [hidden, setHidden]               = useState(mode === 'dictation');
+  const [savedId, setSavedId]             = useState<number | null>(null);
+  const [toast, setToast]                 = useState<string | null>(null);
+  const prevLineRef                       = useRef<SubtitleLine | null>(null);
+  const shadowPausedRef                   = useRef(false);
 
-  // Shadow mode: auto-pause when a new line starts, resume after 3s gap
+  // Shadow mode: auto-pause when a new line starts, resume after char-based pause
   useEffect(() => {
     if (mode !== 'shadow') return;
     if (!activeLine) return;
@@ -45,14 +65,12 @@ export default function SubtitlePlayer({
       videoRef.current.pause();
       shadowPausedRef.current = true;
 
-      // Auto-resume after (line duration + 2s buffer) to allow user to shadow
-      const lineDuration = activeLine.end_ms - activeLine.start_ms;
-      const pauseFor     = Math.max(lineDuration, 2000) + 500;
+      const pauseFor = shadowPauseMs(activeLine);
 
       setTimeout(() => {
         if (videoRef.current) videoRef.current.play();
         shadowPausedRef.current = false;
-        if (onSentenceComplete) onSentenceComplete(activeLine);
+        onSentenceComplete?.(activeLine);
       }, pauseFor);
     }
   }, [activeLine, mode, videoRef, onSentenceComplete]);
@@ -60,26 +78,22 @@ export default function SubtitlePlayer({
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // Only fire when not typing in an input
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
-
       switch (e.key.toLowerCase()) {
-        case 'h':  // H = hide/show subtitle
-          setHidden(h => !h);
-          break;
-        case 'r':  // R = replay current line
+        case 'h':          setHidden(h => !h); break;
+        case 'r':
           if (activeLine && videoRef.current) {
             videoRef.current.currentTime = activeLine.start_ms / 1000;
             videoRef.current.play();
           }
           break;
-        case 's':  // S = save current line to vault
+        case 's':
           if (activeLine) saveToVault(activeLine);
           break;
-        case 'arrowleft':  // ← = back 5s
+        case 'arrowleft':
           if (videoRef.current) videoRef.current.currentTime -= 5;
           break;
-        case 'arrowright': // → = forward 5s
+        case 'arrowright':
           if (videoRef.current) videoRef.current.currentTime += 5;
           break;
       }
@@ -89,25 +103,25 @@ export default function SubtitlePlayer({
   }, [activeLine]);
 
   function saveToVault(line: SubtitleLine) {
-    if (savedId === line.index) return; // already saved this line
+    if (savedId === line.index) return;
     const entry: VaultEntry = {
-      id:                   `vault_${Date.now()}_${line.index}`,
-      user_id:              'guest',
-      japanese:             line.text,
-      reading:              '',
-      meaning:              '',
-      source_anime:         animeId,
-      source_episode:       episodeNumber,
-      source_timestamp_ms:  line.start_ms,
-      tags:                 [],
-      created_at:           new Date().toISOString(),
-      review_count:         0,
-      last_reviewed_at:     null,
+      id:                  `vault_${Date.now()}_${line.index}`,
+      user_id:             'guest',
+      japanese:            line.text,
+      reading:             '',
+      meaning:             '',
+      source_anime:        animeId,
+      source_episode:      episodeNumber,
+      source_timestamp_ms: line.start_ms,
+      tags:                [],
+      created_at:          new Date().toISOString(),
+      review_count:        0,
+      last_reviewed_at:    null,
     };
     saveVaultEntry(entry);
     setSavedId(line.index);
     showToast('📚 Saved to vault!');
-    if (onSaved) onSaved(entry);
+    onSaved?.(entry);
   }
 
   function showToast(msg: string) {
@@ -124,16 +138,13 @@ export default function SubtitlePlayer({
 
   return (
     <div className="relative">
-      {/* Toast */}
       {toast && (
         <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-full whitespace-nowrap z-10">
           {toast}
         </div>
       )}
 
-      {/* Main subtitle box */}
       <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 min-h-[80px] flex flex-col gap-3">
-        {/* Subtitle text */}
         <div className="text-center">
           {activeLine ? (
             hidden ? (
@@ -153,12 +164,9 @@ export default function SubtitlePlayer({
           )}
         </div>
 
-        {/* Controls row */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
-            {/* Replay */}
-            <ControlBtn onClick={replayLine} title="Replay (R)" emoji="🔁" />
-            {/* Hide/show */}
+            <ControlBtn onClick={replayLine}           title="Replay (R)"           emoji="🔁" />
             <ControlBtn
               onClick={() => setHidden(h => !h)}
               title="Hide/show subtitle (H)"
@@ -166,8 +174,6 @@ export default function SubtitlePlayer({
               active={hidden}
             />
           </div>
-
-          {/* Save to vault */}
           {activeLine && (
             <button
               onClick={() => saveToVault(activeLine)}
@@ -183,12 +189,17 @@ export default function SubtitlePlayer({
           )}
         </div>
 
-        {/* Mode badge */}
         <div className="flex items-center justify-between">
           <ModeBadge mode={mode} />
-          <p className="text-xs text-gray-600">
-            H · hide &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save
-          </p>
+          {/* Show pause duration hint in shadow mode */}
+          {mode === 'shadow' && activeLine && (
+            <p className="text-xs text-gray-600">
+              ⏱ {(shadowPauseMs(activeLine) / 1000).toFixed(1)}s to repeat
+            </p>
+          )}
+          {mode !== 'shadow' && (
+            <p className="text-xs text-gray-600">H · hide &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save</p>
+          )}
         </div>
       </div>
     </div>

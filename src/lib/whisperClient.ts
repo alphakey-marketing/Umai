@@ -2,8 +2,8 @@
  * whisperClient.ts
  *
  * Decodes audio on the main thread, splits into 30s chunks,
- * sends each chunk to the worker one-at-a-time, and streams
- * partial subtitle lines back via onTranscribeProgress.
+ * sends each chunk to the worker one-at-a-time, streams
+ * partial subtitle lines back, and deduplicates at boundaries.
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -12,7 +12,7 @@ export type TranscribeProgressEvent = {
     | 'decoding' | 'decoded'
     | 'initiate' | 'download' | 'progress' | 'done'
     | 'ready'
-    | 'partial';   // streaming chunk result
+    | 'partial';
   name?: string;
   progress?: number;
   file?: string;
@@ -40,18 +40,14 @@ export function onTranscribeProgress(cb: ProgressCallback): void {
   progressCb = cb;
 }
 
-/** Decode any audio/video file to mono 16kHz Float32Array */
 export async function decodeToMono16k(file: File): Promise<Float32Array> {
   const arrayBuffer  = await file.arrayBuffer();
   const tmpCtx       = new AudioContext();
   const decoded      = await tmpCtx.decodeAudioData(arrayBuffer);
   await tmpCtx.close();
-
   const native       = decoded.sampleRate;
-  const frames       = decoded.length;
   const targetRate   = 16000;
-  const targetFrames = Math.ceil(frames * (targetRate / native));
-
+  const targetFrames = Math.ceil(decoded.length * (targetRate / native));
   const offCtx = new OfflineAudioContext(1, targetFrames, targetRate);
   const src    = offCtx.createBufferSource();
   src.buffer   = decoded;
@@ -61,7 +57,6 @@ export async function decodeToMono16k(file: File): Promise<Float32Array> {
   return rendered.getChannelData(0).slice();
 }
 
-/** Send one message to the worker and wait for a specific reply type */
 function workerRoundTrip(
   w: Worker,
   msg: object,
@@ -71,62 +66,59 @@ function workerRoundTrip(
   return new Promise((resolve, reject) => {
     function handler(e: MessageEvent) {
       const d = e.data;
-      if (d.type === 'progress' && d.data) {
-        // Forward model-download progress while waiting
-        progressCb?.(d.data as TranscribeProgressEvent);
-        return;
-      }
-      if (d.type === 'error') {
-        w.removeEventListener('message', handler);
-        reject(new Error(d.message ?? 'Worker error'));
-        return;
-      }
-      if (d.type === replyType) {
-        w.removeEventListener('message', handler);
-        resolve(d);
-      }
+      if (d.type === 'progress' && d.data) { progressCb?.(d.data as TranscribeProgressEvent); return; }
+      if (d.type === 'error')              { w.removeEventListener('message', handler); reject(new Error(d.message ?? 'Worker error')); return; }
+      if (d.type === replyType)            { w.removeEventListener('message', handler); resolve(d); }
     }
     w.addEventListener('message', handler);
     w.postMessage(msg, transfer);
   });
 }
 
+/**
+ * Deduplicate subtitle lines at chunk boundaries.
+ * When two chunks overlap by 1s, the last line of chunk N and first line of
+ * chunk N+1 may cover the same timestamp range. Drop any incoming line whose
+ * start_ms is within 1500ms of the last accepted line's start_ms.
+ */
+function deduplicateLines(
+  existing: SubtitleLine[],
+  incoming: SubtitleLine[]
+): SubtitleLine[] {
+  if (!existing.length) return incoming;
+  const lastStart = existing[existing.length - 1].start_ms;
+  const OVERLAP_MS = 1500;
+  return incoming.filter(l => l.start_ms > lastStart + OVERLAP_MS);
+}
+
 export async function transcribeVideoFile(
   file: File,
   model = 'Xenova/whisper-tiny'
 ): Promise<SubtitleLine[]> {
-  // 1. Decode
   progressCb?.({ status: 'decoding' });
   const mono = await decodeToMono16k(file);
   progressCb?.({ status: 'decoded' });
 
   const w = getWorker();
-
-  // 2. Load model (triggers download progress events)
   await workerRoundTrip(w, { type: 'load', model }, [], 'ready');
   progressCb?.({ status: 'ready' });
 
-  // 3. Split into 30s chunks with 1s overlap
   const SAMPLE_RATE  = 16000;
-  const CHUNK_FRAMES = 30 * SAMPLE_RATE;       // 30s
-  const OVERLAP      = 1  * SAMPLE_RATE;       // 1s overlap to avoid cutting words
+  const CHUNK_FRAMES = 30 * SAMPLE_RATE;
+  const OVERLAP      = 1  * SAMPLE_RATE;   // 1s overlap to avoid cutting mid-word
   const step         = CHUNK_FRAMES - OVERLAP;
   const totalFrames  = mono.length;
   const chunks: { data: Float32Array; offsetSec: number }[] = [];
 
   for (let start = 0; start < totalFrames; start += step) {
-    const end  = Math.min(start + CHUNK_FRAMES, totalFrames);
-    chunks.push({
-      data:      mono.slice(start, end),
-      offsetSec: start / SAMPLE_RATE,
-    });
+    const end = Math.min(start + CHUNK_FRAMES, totalFrames);
+    chunks.push({ data: mono.slice(start, end), offsetSec: start / SAMPLE_RATE });
   }
 
-  const totalChunks  = chunks.length;
+  const totalChunks = chunks.length;
   const allLines: SubtitleLine[] = [];
-  let   lineOffset   = 0; // keep subtitle indices continuous
+  let lineOffset = 0;
 
-  // 4. Process chunks one by one, streaming results
   for (let i = 0; i < chunks.length; i++) {
     const { data, offsetSec } = chunks[i];
 
@@ -135,14 +127,16 @@ export async function transcribeVideoFile(
       { type: 'transcribe', audioData: data, model, chunkIndex: i + 1, totalChunks, offsetSec },
       [data.buffer],
       'chunkResult'
-    ) as { lines: SubtitleLine[]; chunkIndex: number; totalChunks: number };
+    ) as { lines: SubtitleLine[] };
 
-    // Re-index lines so they're continuous across chunks
-    const reindexed = result.lines.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
+    // Deduplicate lines overlapping with previous chunk before merging
+    const deduped = deduplicateLines(allLines, result.lines);
+
+    // Re-index continuously
+    const reindexed = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
     lineOffset += reindexed.length;
     allLines.push(...reindexed);
 
-    // Stream partial result to UI immediately
     progressCb?.({
       status:       'partial',
       chunkIndex:   i + 1,
@@ -158,7 +152,6 @@ export function transcribeAudioBuffer(
   audioBuffer: AudioBuffer,
   model = 'Xenova/whisper-tiny'
 ): Promise<SubtitleLine[]> {
-  // Convert AudioBuffer to File-like then reuse transcribeVideoFile logic
   const numChannels = audioBuffer.numberOfChannels;
   const length      = audioBuffer.length;
   const mono        = new Float32Array(length);
@@ -166,7 +159,6 @@ export function transcribeAudioBuffer(
     const chData = audioBuffer.getChannelData(ch);
     for (let i = 0; i < length; i++) mono[i] += chData[i] / numChannels;
   }
-  // Wrap as a fake file via Blob
   const blob = new Blob([mono.buffer], { type: 'audio/raw' });
   const file = new File([blob], 'audio.raw');
   return transcribeVideoFile(file, model);
