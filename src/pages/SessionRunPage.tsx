@@ -30,6 +30,7 @@ export default function SessionRunPage() {
   const videoRef                              = useRef<HTMLVideoElement>(null);
   const [currentMs, setCurrentMs]             = useState(0);
   const [lines, setLines]                     = useState<SubtitleLine[]>(state?.subtitleLines ?? []);
+  const [transcribeDone, setTranscribeDone]   = useState((state?.subtitleLines ?? []).length > 0);
   const [savedCount, setSavedCount]           = useState(0);
   const [completedCount, setCompletedCount]   = useState(0);
   const sessionStartRef                       = useRef(new Date().toISOString());
@@ -48,8 +49,15 @@ export default function SessionRunPage() {
 
   const { anime, episode, mode, videoObjectURL, videoFile } = state;
 
+  // Called by TranscribePanel on every partial AND final result
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
+    // Mark done only when called from the final result (phase === 'done' sets transcribeDone)
+  }, []);
+
+  const handleTranscribeDone = useCallback((result: SubtitleLine[]) => {
+    setLines(result);
+    setTranscribeDone(true);
   }, []);
 
   const handleSentenceComplete = useCallback((_line: SubtitleLine) => {
@@ -86,6 +94,9 @@ export default function SessionRunPage() {
     navigate('/session/feedback', { state: { session, savedCount, completedCount } });
   }
 
+  // Show subtitle player as soon as we have any lines (streaming or final)
+  const hasLines = lines.length > 0;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -118,16 +129,17 @@ export default function SessionRunPage() {
         onEnded={handleEnd}
       />
 
-      {/* Transcribe panel — shown only when no SRT was loaded */}
-      {lines.length === 0 && (
+      {/* TranscribePanel — shown until transcription is fully done */}
+      {!transcribeDone && (
         <TranscribePanel
           videoFile={videoFile ?? null}
           onResult={handleTranscribeResult}
+          onDone={handleTranscribeDone}
         />
       )}
 
-      {/* Subtitle player */}
-      {lines.length > 0 && (
+      {/* Subtitle player — shown as soon as any lines exist (streaming-friendly) */}
+      {hasLines && (
         <SubtitlePlayer
           lines={lines}
           currentMs={currentMs}

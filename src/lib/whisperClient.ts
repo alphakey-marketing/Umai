@@ -1,19 +1,17 @@
 /**
  * whisperClient.ts
- * Decodes audio on the main thread (OfflineAudioContext works here),
- * then transfers raw Float32Array PCM to the worker for Whisper inference.
+ * Decodes audio on the main thread, then sends PCM to worker for inference.
  */
 import type { SubtitleLine } from '../types/index';
 
 export type TranscribeProgressEvent = {
-  status: 'decoding' | 'decoded' | 'initiate' | 'download' | 'progress' | 'done' | 'ready'
-        | 'chunk';
+  status: 'decoding' | 'decoded' | 'initiate' | 'download' | 'progress' | 'done' | 'ready' | 'chunk' | 'partial';
   name?: string;
   progress?: number;
   file?: string;
-  // chunk progress
   chunkIndex?: number;
   totalChunks?: number;
+  partialLines?: SubtitleLine[];
 };
 
 type ProgressCallback = (event: TranscribeProgressEvent) => void;
@@ -32,19 +30,15 @@ export function onTranscribeProgress(cb: ProgressCallback): void {
   progressCb = cb;
 }
 
-/** Decode any audio/video file to mono 16kHz Float32Array on the main thread */
 async function decodeToMono16k(file: File): Promise<Float32Array> {
   const arrayBuffer = await file.arrayBuffer();
-
   const tmpCtx  = new AudioContext();
   const decoded = await tmpCtx.decodeAudioData(arrayBuffer);
   await tmpCtx.close();
-
   const native       = decoded.sampleRate;
   const frames       = decoded.length;
   const targetRate   = 16000;
   const targetFrames = Math.ceil(frames * (targetRate / native));
-
   const offCtx = new OfflineAudioContext(1, targetFrames, targetRate);
   const src    = offCtx.createBufferSource();
   src.buffer   = decoded;
@@ -68,8 +62,9 @@ export async function transcribeVideoFile(
       const { type, lines, data, message, chunkIndex, totalChunks } = e.data;
       if (type === 'progress' && data) {
         progressCb?.(data as TranscribeProgressEvent);
+      } else if (type === 'partial') {
+        progressCb?.({ status: 'partial', chunkIndex, totalChunks, partialLines: lines });
       } else if (type === 'chunk') {
-        // Forward chunk progress as a synthetic progress event
         progressCb?.({ status: 'chunk', chunkIndex, totalChunks });
       } else if (type === 'result' && lines) {
         w.removeEventListener('message', onMessage);
@@ -100,6 +95,7 @@ export function transcribeAudioBuffer(
     function onMessage(e: MessageEvent) {
       const { type, lines, data, message, chunkIndex, totalChunks } = e.data;
       if      (type === 'progress' && data)  progressCb?.(data);
+      else if (type === 'partial')           progressCb?.({ status: 'partial', chunkIndex, totalChunks, partialLines: lines });
       else if (type === 'chunk')             progressCb?.({ status: 'chunk', chunkIndex, totalChunks });
       else if (type === 'result' && lines)   { w.removeEventListener('message', onMessage); resolve(lines); }
       else if (type === 'error')             { w.removeEventListener('message', onMessage); reject(new Error(message ?? 'Transcription failed')); }
