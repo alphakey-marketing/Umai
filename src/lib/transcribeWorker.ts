@@ -6,24 +6,31 @@
  * Message IN:  { type: 'transcribe', audioData: Float32Array, model: string }
  * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
  *
- * NOTE: We use dynamic import() instead of a static top-level import so that
- * Vite does not attempt to bundle @xenova/transformers in iife worker format,
- * which breaks ES module loading. Dynamic import() is left as-is by Vite.
+ * NOTE: We import directly from CDN to bypass Vite 3's broken worker bundling.
+ * Vite 3 mangles @xenova/transformers even with optimizeDeps.exclude, causing
+ * ONNX registerBackend errors. CDN import loads the real untouched ESM build.
  */
 import type { SubtitleLine } from '../types/index';
 
 type WhisperChunk = { timestamp: [number, number | null]; text: string };
 
-let currentModel = '';
-let transcriber: unknown = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PipelineFn = (input: Float32Array, opts: object) => Promise<{ chunks?: WhisperChunk[] }>;
 
-async function getTranscriber(model: string) {
+let currentModel = '';
+let transcriber: PipelineFn | null = null;
+
+async function getTranscriber(model: string): Promise<PipelineFn> {
   if (transcriber && currentModel === model) return transcriber;
   transcriber  = null;
   currentModel = model;
 
-  // Dynamic import avoids Vite bundling @xenova/transformers in iife format
-  const { pipeline, env } = await import('@xenova/transformers');
+  // Load directly from CDN — untouched by Vite, works in module workers
+  const { pipeline, env } = await import(
+    /* @vite-ignore */
+    'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/src/transformers.js'
+  );
+
   env.allowLocalModels = false;
   env.useBrowserCache  = true;
 
@@ -35,7 +42,8 @@ async function getTranscriber(model: string) {
         self.postMessage({ type: 'progress', data });
       },
     }
-  );
+  ) as PipelineFn;
+
   return transcriber;
 }
 
@@ -53,7 +61,7 @@ self.onmessage = async (event: MessageEvent) => {
       throw new Error('Received empty audio data.');
     }
 
-    const pipe = await getTranscriber(model ?? 'Xenova/whisper-small') as (input: Float32Array, opts: object) => Promise<{ chunks?: WhisperChunk[] }>;
+    const pipe = await getTranscriber(model ?? 'Xenova/whisper-small');
     self.postMessage({ type: 'progress', data: { status: 'ready' } });
 
     const output = await pipe(audioData, {
