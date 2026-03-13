@@ -6,15 +6,13 @@
  * Message IN:  { type: 'transcribe', audioData: Float32Array, model: string }
  * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
  *
- * NOTE: We import directly from CDN to bypass Vite 3's broken worker bundling.
- * Vite 3 mangles @xenova/transformers even with optimizeDeps.exclude, causing
- * ONNX registerBackend errors. CDN import loads the real untouched ESM build.
+ * NOTE: We use the pre-bundled ESM dist from CDN so that:
+ * 1. Vite 3 never touches @xenova/transformers (no registerBackend / iife errors)
+ * 2. All sub-dependencies (@huggingface/jinja etc.) are already bundled inside
  */
 import type { SubtitleLine } from '../types/index';
 
 type WhisperChunk = { timestamp: [number, number | null]; text: string };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PipelineFn = (input: Float32Array, opts: object) => Promise<{ chunks?: WhisperChunk[] }>;
 
 let currentModel = '';
@@ -25,10 +23,10 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
   transcriber  = null;
   currentModel = model;
 
-  // Load directly from CDN — untouched by Vite, works in module workers
+  // Use the self-contained bundled dist — all deps included, no bare specifiers
   const { pipeline, env } = await import(
     /* @vite-ignore */
-    'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/src/transformers.js'
+    'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js'
   );
 
   env.allowLocalModels = false;
