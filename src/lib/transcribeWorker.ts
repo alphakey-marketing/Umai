@@ -5,10 +5,6 @@
  *
  * Message IN:  { type: 'transcribe', audioData: Float32Array, model: string }
  * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
- *
- * NOTE: We use the pre-bundled ESM dist from CDN so that:
- * 1. Vite 3 never touches @xenova/transformers (no registerBackend / iife errors)
- * 2. All sub-dependencies (@huggingface/jinja etc.) are already bundled inside
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -23,11 +19,12 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
   transcriber  = null;
   currentModel = model;
 
-  // Use the self-contained bundled dist — all deps included, no bare specifiers
-  const { pipeline, env } = await import(
-    /* @vite-ignore */
-    'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js'
-  );
+  // @ts-ignore — CDN URL is intentional; tsc cannot resolve it but browser can
+  // @vite-ignore
+  const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js') as {
+    pipeline: (task: string, model: string, opts: object) => Promise<PipelineFn>;
+    env: { allowLocalModels: boolean; useBrowserCache: boolean };
+  };
 
   env.allowLocalModels = false;
   env.useBrowserCache  = true;
@@ -40,9 +37,9 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
         self.postMessage({ type: 'progress', data });
       },
     }
-  ) as PipelineFn;
+  );
 
-  return transcriber;
+  return transcriber!;
 }
 
 self.onmessage = async (event: MessageEvent) => {
