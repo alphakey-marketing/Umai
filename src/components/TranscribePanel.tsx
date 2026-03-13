@@ -18,18 +18,22 @@ interface Props {
 type Phase = 'idle' | 'decoding' | 'loading-model' | 'transcribing' | 'done' | 'error';
 
 export default function TranscribePanel({ videoFile, onResult }: Props) {
-  const { settings }            = useSettings();
-  const [phase, setPhase]       = useState<Phase>('idle');
-  const [progress, setProgress] = useState(0);
-  const [statusMsg, setStatus]  = useState('');
-  const [subMsg, setSubMsg]     = useState('');
-  const [error, setError]       = useState<string | null>(null);
+  const { settings }              = useSettings();
+  const [phase, setPhase]         = useState<Phase>('idle');
+  const [progress, setProgress]   = useState(0);
+  const [statusMsg, setStatus]    = useState('');
+  const [subMsg, setSubMsg]       = useState('');
+  const [error, setError]         = useState<string | null>(null);
+  const [chunkIndex, setChunkIdx] = useState(0);
+  const [totalChunks, setTotal]   = useState(0);
 
   const handleTranscribe = useCallback(async () => {
     if (!videoFile) return;
     setError(null);
     setPhase('decoding');
     setProgress(0);
+    setChunkIdx(0);
+    setTotal(0);
     setStatus('Decoding audio…');
     setSubMsg('Reading audio track from file');
 
@@ -45,7 +49,7 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
         setPhase('loading-model');
         setProgress(0);
         setStatus('Downloading Whisper model…');
-        setSubMsg(ev.file ? `File: ${ev.file}` : '~244 MB — cached after first download');
+        setSubMsg(ev.file ? `File: ${ev.file}` : '~40 MB — cached after first download');
       } else if (ev.status === 'progress') {
         const pct = Math.round(ev.progress ?? 0);
         setPhase('loading-model');
@@ -58,7 +62,16 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
         setPhase('transcribing');
         setProgress(0);
         setStatus('Transcribing Japanese audio…');
-        setSubMsg('This may take a few minutes…');
+        setSubMsg('Starting…');
+      } else if (ev.status === 'chunk') {
+        const ci = ev.chunkIndex ?? 0;
+        const tc = ev.totalChunks ?? 0;
+        setChunkIdx(ci);
+        setTotal(tc);
+        const pct = tc > 0 ? Math.round((ci / tc) * 100) : 0;
+        setProgress(pct);
+        setStatus('Transcribing Japanese audio…');
+        setSubMsg(`Processing chunk ${ci} / ${tc}`);
       }
     });
 
@@ -123,11 +136,13 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
     );
   }
 
-  const showPercent = phase === 'loading-model';
-  const barWidth    = phase === 'transcribing' ? 60
-                    : phase === 'decoding'     ? 30
-                    : Math.max(progress, 2);
-  const barAnimate  = phase === 'transcribing' || phase === 'decoding';
+  // During transcribing, show real chunk-based percent; otherwise model download percent
+  const showPercent  = phase === 'loading-model' || phase === 'transcribing';
+  const barWidth     = phase === 'transcribing'   ? Math.max(progress, 2)
+                     : phase === 'loading-model'  ? Math.max(progress, 2)
+                     : phase === 'decoding'        ? 30
+                     : 2;
+  const barAnimate   = phase === 'decoding' || (phase === 'transcribing' && totalChunks === 0);
 
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 space-y-3">
@@ -138,7 +153,12 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
           {subMsg && <p className="text-xs text-gray-500 mt-0.5 truncate">{subMsg}</p>}
         </div>
         {showPercent && (
-          <span className="text-sm font-bold text-indigo-400 shrink-0">{progress}%</span>
+          <span className="text-sm font-bold text-indigo-400 shrink-0">
+            {phase === 'transcribing' && totalChunks > 0
+              ? `${chunkIndex} / ${totalChunks}`
+              : `${progress}%`
+            }
+          </span>
         )}
       </div>
       <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
@@ -152,7 +172,7 @@ export default function TranscribePanel({ videoFile, onResult }: Props) {
       <p className="text-xs text-gray-600">
         {phase === 'decoding'      && 'Decoding audio in browser — no upload needed'}
         {phase === 'loading-model' && 'Cached after first download — future runs are instant'}
-        {phase === 'transcribing'  && 'Running speech recognition…'}
+        {phase === 'transcribing'  && 'Running speech recognition — whisper-tiny is ~4× faster'}
       </p>
     </div>
   );

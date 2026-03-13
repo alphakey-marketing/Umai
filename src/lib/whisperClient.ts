@@ -6,10 +6,14 @@
 import type { SubtitleLine } from '../types/index';
 
 export type TranscribeProgressEvent = {
-  status: 'decoding' | 'decoded' | 'initiate' | 'download' | 'progress' | 'done' | 'ready';
+  status: 'decoding' | 'decoded' | 'initiate' | 'download' | 'progress' | 'done' | 'ready'
+        | 'chunk';
   name?: string;
   progress?: number;
   file?: string;
+  // chunk progress
+  chunkIndex?: number;
+  totalChunks?: number;
 };
 
 type ProgressCallback = (event: TranscribeProgressEvent) => void;
@@ -32,7 +36,6 @@ export function onTranscribeProgress(cb: ProgressCallback): void {
 async function decodeToMono16k(file: File): Promise<Float32Array> {
   const arrayBuffer = await file.arrayBuffer();
 
-  // Decode at native sample rate first
   const tmpCtx  = new AudioContext();
   const decoded = await tmpCtx.decodeAudioData(arrayBuffer);
   await tmpCtx.close();
@@ -42,32 +45,32 @@ async function decodeToMono16k(file: File): Promise<Float32Array> {
   const targetRate   = 16000;
   const targetFrames = Math.ceil(frames * (targetRate / native));
 
-  // Resample to 16kHz via OfflineAudioContext
   const offCtx = new OfflineAudioContext(1, targetFrames, targetRate);
   const src    = offCtx.createBufferSource();
   src.buffer   = decoded;
   src.connect(offCtx.destination);
   src.start(0);
   const rendered = await offCtx.startRendering();
-  return rendered.getChannelData(0).slice(); // slice() to detach from AudioBuffer
+  return rendered.getChannelData(0).slice();
 }
 
 export async function transcribeVideoFile(
   file: File,
-  model = 'Xenova/whisper-small'
+  model = 'Xenova/whisper-tiny'
 ): Promise<SubtitleLine[]> {
-  // Step 1: decode on main thread
   progressCb?.({ status: 'decoding' });
   const mono = await decodeToMono16k(file);
   progressCb?.({ status: 'decoded' });
 
-  // Step 2: send PCM to worker for model download + inference
   return new Promise((resolve, reject) => {
     const w = getWorker();
     function onMessage(e: MessageEvent) {
-      const { type, lines, data, message } = e.data;
+      const { type, lines, data, message, chunkIndex, totalChunks } = e.data;
       if (type === 'progress' && data) {
         progressCb?.(data as TranscribeProgressEvent);
+      } else if (type === 'chunk') {
+        // Forward chunk progress as a synthetic progress event
+        progressCb?.({ status: 'chunk', chunkIndex, totalChunks });
       } else if (type === 'result' && lines) {
         w.removeEventListener('message', onMessage);
         resolve(lines);
@@ -77,15 +80,13 @@ export async function transcribeVideoFile(
       }
     }
     w.addEventListener('message', onMessage);
-    // Transfer buffer zero-copy
     w.postMessage({ type: 'transcribe', audioData: mono, model }, [mono.buffer]);
   });
 }
 
-/** For callers that already have a decoded AudioBuffer */
 export function transcribeAudioBuffer(
   audioBuffer: AudioBuffer,
-  model = 'Xenova/whisper-small'
+  model = 'Xenova/whisper-tiny'
 ): Promise<SubtitleLine[]> {
   const numChannels = audioBuffer.numberOfChannels;
   const length      = audioBuffer.length;
@@ -97,9 +98,10 @@ export function transcribeAudioBuffer(
   return new Promise((resolve, reject) => {
     const w = getWorker();
     function onMessage(e: MessageEvent) {
-      const { type, lines, data, message } = e.data;
+      const { type, lines, data, message, chunkIndex, totalChunks } = e.data;
       if      (type === 'progress' && data)  progressCb?.(data);
-      else if (type === 'result'   && lines) { w.removeEventListener('message', onMessage); resolve(lines); }
+      else if (type === 'chunk')             progressCb?.({ status: 'chunk', chunkIndex, totalChunks });
+      else if (type === 'result' && lines)   { w.removeEventListener('message', onMessage); resolve(lines); }
       else if (type === 'error')             { w.removeEventListener('message', onMessage); reject(new Error(message ?? 'Transcription failed')); }
     }
     w.addEventListener('message', onMessage);

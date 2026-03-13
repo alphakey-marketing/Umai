@@ -4,7 +4,7 @@
  * Only responsible for: loading Whisper model + running inference.
  *
  * Message IN:  { type: 'transcribe', audioData: Float32Array, model: string }
- * Message OUT: { type: 'progress', data } | { type: 'result', lines } | { type: 'error', message }
+ * Message OUT: { type: 'progress', data } | { type: 'chunk', chunkIndex, totalChunks } | { type: 'result', lines } | { type: 'error', message }
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -56,16 +56,30 @@ self.onmessage = async (event: MessageEvent) => {
       throw new Error('Received empty audio data.');
     }
 
-    const pipe = await getTranscriber(model ?? 'Xenova/whisper-small');
+    // whisper-tiny is ~4x faster than whisper-small with good Japanese accuracy
+    const resolvedModel = model ?? 'Xenova/whisper-tiny';
+    const pipe = await getTranscriber(resolvedModel);
     self.postMessage({ type: 'progress', data: { status: 'ready' } });
+
+    // Calculate total chunks so UI can show X / Y progress
+    const CHUNK_S  = 30;
+    const STRIDE_S = 5;
+    const durationS = audioData.length / 16000;
+    const totalChunks = Math.max(1, Math.ceil(durationS / (CHUNK_S - STRIDE_S)));
+    let chunkIndex = 0;
 
     const output = await pipe(audioData, {
       language: 'japanese',
       task: 'transcribe',
       return_timestamps: 'word',
-      chunk_length_s: 30,
-      stride_length_s: 5,
-    });
+      chunk_length_s: CHUNK_S,
+      stride_length_s: STRIDE_S,
+      // Called after each chunk is decoded
+      chunk_callback: (_chunk: unknown) => {
+        chunkIndex += 1;
+        self.postMessage({ type: 'chunk', chunkIndex, totalChunks });
+      },
+    }) as { chunks?: WhisperChunk[] };
 
     const lines = chunksToSubtitleLines(output.chunks ?? []);
     self.postMessage({ type: 'result', lines });
