@@ -13,6 +13,7 @@
  *   { type: 'error',       message }
  */
 import type { SubtitleLine } from '../types/index';
+import { pipeline, env } from '@xenova/transformers';
 
 type WordToken = {
   text: string;
@@ -29,15 +30,6 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
   transcriber  = null;
   currentModel = model;
 
-  // @ts-ignore — CDN URL intentional; tsc cannot resolve but browser can
-  // @vite-ignore
-  const { pipeline, env } = await import(
-    'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js'
-  ) as {
-    pipeline: (task: string, model: string, opts: object) => Promise<PipelineFn>;
-    env: { allowLocalModels: boolean; useBrowserCache: boolean };
-  };
-
   env.allowLocalModels = false;
   env.useBrowserCache  = true;
 
@@ -45,7 +37,7 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
     'automatic-speech-recognition',
     model,
     { progress_callback: (data: unknown) => self.postMessage({ type: 'progress', data }) }
-  );
+  ) as unknown as PipelineFn;
   return transcriber!;
 }
 
@@ -101,10 +93,10 @@ self.onmessage = async (event: MessageEvent) => {
 
 /**
  * Convert word-level tokens into subtitle lines using:
- * 1. Silence gaps  ≥ 0.5s  → always break
- * 2. Silence gaps  ≥ 0.3s + punctuation → break
- * 3. Line duration ≥ 8s    → force break (too long to shadow)
- * 4. Word count    ≥ 15    → force break (safety cap)
+ * 1. Silence gaps  >= 0.5s  -> always break
+ * 2. Silence gaps  >= 0.3s + punctuation -> break
+ * 3. Line duration >= 8s    -> force break (too long to shadow)
+ * 4. Word count    >= 15    -> force break (safety cap)
  * This produces natural sentence-length chunks aligned with actual pauses.
  */
 function wordsToSubtitleLines(words: WordToken[]): SubtitleLine[] {
@@ -146,7 +138,7 @@ function wordsToSubtitleLines(words: WordToken[]): SubtitleLine[] {
     const gap      = next ? (next.timestamp[0] - wordEnd) : 999;
 
     // Calculate current buffer duration
-    const bufStart   = buffer[0].timestamp[0];
+    const bufStart    = buffer[0].timestamp[0];
     const bufDuration = wordEnd - bufStart;
 
     const hasPunct   = PUNCT.test(word.text);
