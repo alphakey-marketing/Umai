@@ -1,6 +1,30 @@
 /**
  * whisperClient.ts
  *
+ * ============================================================
+ * CRITICAL ARCHITECTURE — READ BEFORE MODIFYING
+ * ============================================================
+ *
+ * The worker MUST be instantiated exactly as:
+ *
+ *   new Worker(new URL('./transcribeWorker.ts', import.meta.url), { type: 'module' })
+ *
+ * - { type: 'module' } is MANDATORY.
+ *   Without it, the browser loads transcribeWorker as a classic worker,
+ *   and dynamic import() inside it is not available in classic workers.
+ *
+ * - new URL('./transcribeWorker.ts', import.meta.url) is MANDATORY.
+ *   This is Vite's signal to bundle the worker as a separate module chunk.
+ *   Do NOT pass a plain string path like '/transcribeWorker.js' — that
+ *   loads a static file from public/ which is a classic worker and will
+ *   fail for the same reason above.
+ *
+ * See transcribeWorker.ts for the full explanation of why dynamic import()
+ * from CDN is used instead of importScripts() or a static npm import.
+ *
+ * LAST CONFIRMED WORKING: commit 4a3fefac (March 14 2026)
+ * ============================================================
+ *
  * Decodes audio on the main thread, splits into 30s chunks,
  * sends each chunk to the worker one-at-a-time, streams
  * partial subtitle lines back, and deduplicates at boundaries.
@@ -25,11 +49,12 @@ type ProgressCallback = (event: TranscribeProgressEvent) => void;
 
 let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
-
 let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
+    // DO NOT change { type: 'module' } or use a plain string path.
+    // See architecture notes at the top of this file.
     worker = new Worker(
       new URL('./transcribeWorker.ts', import.meta.url),
       { type: 'module' }

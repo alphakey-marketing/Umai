@@ -1,6 +1,47 @@
 /**
  * transcribeWorker.ts
  *
+ * ============================================================
+ * CRITICAL ARCHITECTURE — READ BEFORE MODIFYING
+ * ============================================================
+ *
+ * This worker uses dynamic ESM import() to load @xenova/transformers:
+ *
+ *   await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@...')
+ *
+ * This is NOT the same as importScripts(). Here is why this matters:
+ *
+ * 1. NEVER convert this to importScripts().
+ *    importScripts() only works in classic workers (no type:'module').
+ *    Classic workers on Replit are blocked by CSP worker-src 'self' —
+ *    meaning importScripts() to any external URL will ALWAYS fail with
+ *    "Failed to execute 'importScripts' on 'WorkerGlobalScope'".
+ *
+ * 2. NEVER move this file to public/ as a plain .js file.
+ *    Vite must bundle this as a module worker (type:'module') for
+ *    dynamic import() to work. A plain file in public/ is served as a
+ *    classic worker and falls back to the broken importScripts() path.
+ *
+ * 3. NEVER import @xenova/transformers as a normal npm import:
+ *      import { pipeline } from '@xenova/transformers'; // BREAKS
+ *    Vite/esbuild bundling @xenova/transformers triggers BigInt literal
+ *    syntax errors (BigInt is not supported in Vite 3's esbuild target).
+ *    The CDN dynamic import() bypasses the bundler entirely — the library
+ *    is loaded at runtime, not at build time.
+ *
+ * 4. NEVER add worker.format or rollupOptions.external to vite.config.ts
+ *    for this worker. The clean config (react plugin + optimizeDeps.exclude
+ *    only) is what makes the module worker bundle correctly.
+ *
+ * 5. The matching whisperClient.ts MUST instantiate this as:
+ *      new Worker(new URL('./transcribeWorker.ts', import.meta.url), { type: 'module' })
+ *    The { type: 'module' } is mandatory. Without it the worker is
+ *    loaded as a classic worker and dynamic import() inside it fails.
+ *
+ * LAST CONFIRMED WORKING: commit 4a3fefac (March 14 2026)
+ * If transcription breaks, compare against that commit first.
+ * ============================================================
+ *
  * Message IN:
  *   { type: 'load',       model: string }
  *   { type: 'transcribe', audioData: Float32Array,
@@ -29,6 +70,8 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
   transcriber  = null;
   currentModel = model;
 
+  // DO NOT change this to importScripts() or a static npm import.
+  // See architecture notes at the top of this file.
   // @ts-ignore — CDN URL intentional; tsc cannot resolve but browser can
   // @vite-ignore
   const { pipeline, env } = await import(
