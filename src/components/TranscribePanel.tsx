@@ -1,9 +1,12 @@
 /**
  * TranscribePanel — in-browser Whisper transcription UI with streaming support.
+ * Calls onResult() after every chunk so the user can start shadowing immediately.
+ * Calls onDone() once the final complete subtitle set is ready.
  */
 import { useState, useCallback } from 'react';
 import {
   transcribeVideoFile,
+  onTranscribeProgress,
   type TranscribeProgressEvent,
 } from '../lib/whisperClient';
 import { useSettings } from '../lib/settingsContext';
@@ -12,7 +15,7 @@ import type { SubtitleLine } from '../types/index';
 interface Props {
   videoFile: File | null;
   onResult: (lines: SubtitleLine[]) => void;
-  onDone?:  (lines: SubtitleLine[]) => void;
+  onDone?: (lines: SubtitleLine[]) => void;
 }
 
 type Phase = 'idle' | 'decoding' | 'loading-model' | 'transcribing' | 'done' | 'error';
@@ -30,7 +33,6 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
 
   const handleTranscribe = useCallback(async () => {
     if (!videoFile) return;
-
     setError(null);
     setPhase('decoding');
     setProgress(0);
@@ -40,60 +42,50 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
     setStatus('Decoding audio…');
     setSubMsg('Reading audio track from file');
 
-    // Callback is defined INLINE and passed directly to transcribeVideoFile
-    // so it is registered before any async work starts — no race condition.
-    function onProgress(ev: TranscribeProgressEvent) {
+    onTranscribeProgress((ev: TranscribeProgressEvent) => {
       if (ev.status === 'decoding') {
         setPhase('decoding');
         setStatus('Decoding audio…');
         setSubMsg('Reading audio track from file');
-
       } else if (ev.status === 'decoded') {
         setStatus('Audio ready ✓');
         setSubMsg('Loading Whisper model…');
-        setPhase('loading-model');
-
       } else if (ev.status === 'initiate' || ev.status === 'download') {
         setPhase('loading-model');
         setProgress(0);
         setStatus('Downloading Whisper model…');
         setSubMsg(ev.file ? `File: ${ev.file}` : '~40 MB — cached after first download');
-
       } else if (ev.status === 'progress') {
         const pct = Math.round(ev.progress ?? 0);
         setPhase('loading-model');
         setProgress(pct);
         setStatus(`Downloading model — ${pct}%`);
-        setSubMsg(ev.file ?? '');
-
+        setSubMsg(ev.file ? `${ev.file}` : '');
       } else if (ev.status === 'done') {
         setSubMsg(ev.file ? `✓ ${ev.file}` : '✓ Loaded');
-
       } else if (ev.status === 'ready') {
-        // Model is loaded (fresh download OR from cache) — always transition
         setPhase('transcribing');
         setProgress(0);
         setStatus('Transcribing…');
         setSubMsg('First subtitles arriving shortly…');
-
       } else if (ev.status === 'partial') {
-        const ci  = ev.chunkIndex  ?? 0;
-        const tc  = ev.totalChunks ?? 0;
-        const pct = tc > 0 ? Math.round((ci / tc) * 100) : 0;
+        const ci = ev.chunkIndex ?? 0;
+        const tc = ev.totalChunks ?? 0;
         setChunkIdx(ci);
         setTotal(tc);
+        const pct = tc > 0 ? Math.round((ci / tc) * 100) : 0;
         setProgress(pct);
         setStatus('Transcribing…');
-        setSubMsg(`Chunk ${ci} / ${tc}`);
+        setSubMsg(`Chunk ${ci} / ${tc} — subtitles updating`);
         if (ev.partialLines && ev.partialLines.length > 0) {
           setStreaming(true);
           onResult(ev.partialLines);
         }
       }
-    }
+    });
 
     try {
-      const lines = await transcribeVideoFile(videoFile, settings.whisper_model, onProgress);
+      const lines = await transcribeVideoFile(videoFile, settings.whisper_model);
       setPhase('done');
       setStatus(`Done — ${lines.length} subtitle lines`);
       setSubMsg('');
@@ -138,22 +130,18 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
       <div className="rounded-xl bg-red-950/30 border border-red-900 p-4 space-y-2">
         <p className="text-sm font-bold text-red-400">❌ Transcription failed</p>
         <p className="text-xs text-gray-400 break-words">{error}</p>
-        <button
-          onClick={() => { setPhase('idle'); setError(null); }}
-          className="text-xs text-indigo-400 hover:underline"
-        >
-          Try again
-        </button>
+        <button onClick={() => { setPhase('idle'); setError(null); }}
+          className="text-xs text-indigo-400 hover:underline">Try again</button>
       </div>
     );
   }
 
   if (phase === 'done') return null;
 
-  const barWidth   = phase === 'loading-model' || phase === 'transcribing'
-                   ? Math.max(progress, 2) : 30;
-  const barAnimate = phase === 'decoding' ||
-                     (phase === 'transcribing' && totalChunks === 0);
+  const barWidth   = phase === 'transcribing'  ? Math.max(progress, 2)
+                   : phase === 'loading-model' ? Math.max(progress, 2)
+                   : 30;
+  const barAnimate = phase === 'decoding' || (phase === 'transcribing' && totalChunks === 0);
   const showCount  = phase === 'loading-model' || phase === 'transcribing';
 
   return (

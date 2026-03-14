@@ -1,11 +1,10 @@
 /**
  * transcribeWorker.ts — TYPE STUB ONLY
  *
- * The real worker logic lives as a template-literal string inside
- * whisperClient.ts and is instantiated as a Blob worker at runtime.
+ * The real worker lives in public/transcribeWorker.js (a classic Web Worker
+ * loaded via new Worker('/transcribeWorker.js') in whisperClient.ts).
  *
- * This file exists only so TypeScript imports of SubtitleLine and
- * other shared types resolve correctly during type-checking.
- * It is NOT imported or bundled by Vite.
+ * This file exists solely so TypeScript can resolve shared type imports
+ * during type-checking. It is never imported or bundled at runtime.
  */
 export {};
