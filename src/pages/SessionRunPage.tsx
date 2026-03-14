@@ -38,16 +38,19 @@ export default function SessionRunPage() {
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
 
-  // FIX: Revoke the blob URL when this page unmounts to free the video file
-  // memory (can be hundreds of MB for a 20-minute 1080p video). This runs
-  // whether the user ends the session normally, navigates away, or the tab
-  // crashes — React’s cleanup guarantee covers all three cases.
+  // FIX: Capture the blob URL in a ref at mount time so the cleanup
+  // closure always holds the original value and is never affected by
+  // re-renders or React Strict Mode’s double-invoke. Empty dep array
+  // guarantees this runs exactly once on true unmount.
   const videoObjectURL = state?.videoObjectURL ?? '';
+  const videoObjectURLRef = useRef(videoObjectURL);
   useEffect(() => {
     return () => {
-      if (videoObjectURL) URL.revokeObjectURL(videoObjectURL);
+      if (videoObjectURLRef.current) {
+        URL.revokeObjectURL(videoObjectURLRef.current);
+      }
     };
-  }, [videoObjectURL]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!state?.anime) {
     return (
