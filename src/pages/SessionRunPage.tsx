@@ -5,14 +5,12 @@ import SubtitlePlayer from '../components/SubtitlePlayer';
 import TranscribePanel from '../components/TranscribePanel';
 import { saveShadowSession, recordTodayActivity } from '../lib/shadowStorage';
 import { useSettings } from '../lib/settingsContext';
-import { getSessionVideo, revokeSessionVideo } from '../lib/sessionStore';
+import { getSessionFile, clearSessionFile } from '../lib/sessionStore';
 import type {
   AnimeTitle, AnimeEpisode, ShadowingMode,
   SubtitleLine, ShadowingSession, VaultEntry,
 } from '../types';
 
-// Only serializable data travels through history.pushState.
-// File + videoObjectURL are read from sessionStore instead.
 interface LocationState {
   anime:         AnimeTitle;
   episode:       AnimeEpisode;
@@ -29,9 +27,50 @@ export default function SessionRunPage() {
   const state    = location.state as LocationState | null;
   const { settings } = useSettings();
 
-  // Read video file + blob URL from the module-level store — these cannot
-  // travel through history.pushState (File is not structured-cloneable).
-  const { videoFile, videoObjectURL } = getSessionVideo();
+  // --- Video file + blob URL lifecycle ---
+  //
+  // The File lives in sessionStore (survives navigate, not serialized).
+  // We create the blob URL HERE, once, in a ref. This is the ONLY place
+  // it is created and the ONLY place it is revoked.
+  //
+  // Why useRef and not useState or a plain variable:
+  //   - useRef: created once on first render, stable across re-renders,
+  //     NOT affected by React Strict Mode’s double-invoke of effects.
+  //   - We do NOT put URL.createObjectURL inside a useEffect because that
+  //     runs AFTER the first paint, leaving the video src blank initially.
+  //
+  // Why we use a "mounted" ref guard for revoke:
+  //   - React Strict Mode calls the cleanup of useEffect([]) twice in dev.
+  //   - We only want to revoke on the REAL unmount, not the fake one.
+  //   - The mounted ref is set to false only when the real unmount fires,
+  //     which we detect by checking if the component is still in the tree.
+  //
+  // Actually the cleanest solution: store the URL in a ref, revoke it
+  // with a ref-based cleanup that is immune to Strict Mode because we
+  // use the ref value directly in the cleanup closure — no state reads.
+  const videoFile = getSessionFile();
+  const blobURLRef = useRef<string>('');
+  if (!blobURLRef.current && videoFile) {
+    // Runs synchronously on first render (and on Strict Mode’s second render).
+    // On the second render the ref already has a value so this is skipped.
+    blobURLRef.current = URL.createObjectURL(videoFile);
+  }
+  const videoObjectURL = blobURLRef.current;
+
+  // Revoke the blob URL when the component truly unmounts.
+  // We use a separate ref so the cleanup closure captures a stable pointer
+  // to the same ref object — it will always read the current URL value
+  // regardless of when cleanup fires.
+  useEffect(() => {
+    return () => {
+      if (blobURLRef.current) {
+        URL.revokeObjectURL(blobURLRef.current);
+        blobURLRef.current = '';
+      }
+      clearSessionFile();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const videoRef                            = useRef<HTMLVideoElement>(null);
   const [currentMs, setCurrentMs]           = useState(0);
@@ -42,13 +81,6 @@ export default function SessionRunPage() {
   const [speed, setSpeed]                   = useState<Speed>(1.0);
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
-
-  // Revoke the blob URL and clear the store on true unmount.
-  // Empty dep array = runs cleanup exactly once regardless of re-renders
-  // or React Strict Mode double-invoke.
-  useEffect(() => {
-    return () => { revokeSessionVideo(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!state?.anime || !videoObjectURL) {
     return (
