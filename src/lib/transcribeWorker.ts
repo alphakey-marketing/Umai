@@ -1,6 +1,10 @@
 /**
  * transcribeWorker.ts
  *
+ * Runs as a Web Worker (type:module). Loads @xenova/transformers at
+ * runtime via importScripts so the library's BigInt literals are never
+ * processed by Vite/esbuild during the production build.
+ *
  * Message IN:
  *   { type: 'load',       model: string }
  *   { type: 'transcribe', audioData: Float32Array,
@@ -13,7 +17,16 @@
  *   { type: 'error',       message }
  */
 import type { SubtitleLine } from '../types/index';
-import { pipeline, env } from '@xenova/transformers';
+
+// ---------------------------------------------------------------------------
+// Ambient types so tsc compiles without resolving the CDN module
+// ---------------------------------------------------------------------------
+declare function importScripts(...urls: string[]): void;
+
+declare const transformers: {
+  pipeline: (task: string, model: string, opts: object) => Promise<PipelineFn>;
+  env: { allowLocalModels: boolean; useBrowserCache: boolean };
+};
 
 type WordToken = {
   text: string;
@@ -22,6 +35,19 @@ type WordToken = {
 
 type PipelineFn = (input: Float32Array, opts: object) => Promise<{ chunks?: WordToken[] }>;
 
+const CDN_URL =
+  'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
+
+let transformersLoaded = false;
+
+function ensureTransformers(): void {
+  if (transformersLoaded) return;
+  // importScripts loads the UMD bundle synchronously into the worker scope.
+  // The bundle exposes a global `transformers` object.
+  importScripts(CDN_URL);
+  transformersLoaded = true;
+}
+
 let currentModel = '';
 let transcriber: PipelineFn | null = null;
 
@@ -29,6 +55,11 @@ async function getTranscriber(model: string): Promise<PipelineFn> {
   if (transcriber && currentModel === model) return transcriber;
   transcriber  = null;
   currentModel = model;
+
+  ensureTransformers();
+
+  // Access globals injected by the UMD bundle
+  const { pipeline, env } = (self as unknown as { transformers: typeof transformers }).transformers;
 
   env.allowLocalModels = false;
   env.useBrowserCache  = true;
@@ -74,7 +105,6 @@ self.onmessage = async (event: MessageEvent) => {
         return_timestamps: 'word',
       }) as { chunks?: WordToken[] };
 
-      // Shift timestamps by the chunk's start offset in the full audio
       const shifted: WordToken[] = (output.chunks ?? []).map(c => ({
         ...c,
         timestamp: [
@@ -91,19 +121,11 @@ self.onmessage = async (event: MessageEvent) => {
   }
 };
 
-/**
- * Convert word-level tokens into subtitle lines using:
- * 1. Silence gaps  >= 0.5s  -> always break
- * 2. Silence gaps  >= 0.3s + punctuation -> break
- * 3. Line duration >= 8s    -> force break (too long to shadow)
- * 4. Word count    >= 15    -> force break (safety cap)
- * This produces natural sentence-length chunks aligned with actual pauses.
- */
 function wordsToSubtitleLines(words: WordToken[]): SubtitleLine[] {
-  const LONG_PAUSE     = 0.5;   // seconds — always split
-  const SHORT_PAUSE    = 0.3;   // seconds — split on punctuation
-  const MAX_DURATION_S = 8.0;   // seconds — force split
-  const MAX_WORDS      = 15;    // words   — safety cap
+  const LONG_PAUSE     = 0.5;
+  const SHORT_PAUSE    = 0.3;
+  const MAX_DURATION_S = 8.0;
+  const MAX_WORDS      = 15;
   const PUNCT          = /[。、！？!?,，]/;
 
   const lines: SubtitleLine[] = [];
@@ -130,14 +152,10 @@ function wordsToSubtitleLines(words: WordToken[]): SubtitleLine[] {
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
     const next = words[i + 1];
-
     buffer.push(word);
 
-    // Calculate gap to next word
-    const wordEnd  = word.timestamp[1] ?? word.timestamp[0] + 0.2;
-    const gap      = next ? (next.timestamp[0] - wordEnd) : 999;
-
-    // Calculate current buffer duration
+    const wordEnd     = word.timestamp[1] ?? word.timestamp[0] + 0.2;
+    const gap         = next ? (next.timestamp[0] - wordEnd) : 999;
     const bufStart    = buffer[0].timestamp[0];
     const bufDuration = wordEnd - bufStart;
 
@@ -147,10 +165,8 @@ function wordsToSubtitleLines(words: WordToken[]): SubtitleLine[] {
     const longPause  = gap          >= LONG_PAUSE;
     const shortPause = gap          >= SHORT_PAUSE && hasPunct;
 
-    if (longPause || shortPause || tooLong || tooManyW) {
-      flush();
-    }
+    if (longPause || shortPause || tooLong || tooManyW) flush();
   }
-  flush(); // remainder
+  flush();
   return lines;
 }
