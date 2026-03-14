@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import type { SubtitleLine, VaultEntry } from '../types';
 import { getActiveLine } from '../lib/subtitleParser';
 import { saveVaultEntry } from '../lib/shadowStorage';
@@ -44,22 +44,63 @@ export default function SubtitlePlayer({
   const shadowPausedRef             = useRef(false);
   const resumeTimerRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Keep a stable ref to activeLine so keyboard handler can read it without
+  // being in the dependency array (avoids re-registering keydown every tick)
+  const activeLineRef               = useRef<SubtitleLine | null>(null);
+  activeLineRef.current             = activeLine;
 
   // Helper: stop the live countdown ticker
-  function clearCountdown() {
+  const clearCountdown = useCallback(() => {
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
     setCountdown(null);
-  }
+  }, []);
+
+  // Helper: start a fresh pause + countdown for a given line.
+  // Used both by the auto-pause effect and by the R-key replay handler.
+  const startShadowPause = useCallback((line: SubtitleLine) => {
+    if (!videoRef.current) return;
+
+    // Cancel any currently running timer/countdown first
+    if (resumeTimerRef.current) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+    clearCountdown();
+
+    videoRef.current.pause();
+    shadowPausedRef.current = true;
+
+    const totalMs = shadowPauseMs(line, pauseCapMs);
+
+    // Start the live countdown ticker (100ms resolution for smooth display)
+    let remaining = totalMs;
+    setCountdown(remaining);
+    countdownIntervalRef.current = setInterval(() => {
+      remaining -= 100;
+      if (remaining <= 0) {
+        clearCountdown();
+      } else {
+        setCountdown(remaining);
+      }
+    }, 100);
+
+    resumeTimerRef.current = setTimeout(() => {
+      resumeTimerRef.current = null;
+      clearCountdown();
+      if (videoRef.current) videoRef.current.play();
+      shadowPausedRef.current = false;
+      onSentenceComplete?.(line);
+    }, totalMs);
+  }, [videoRef, pauseCapMs, clearCountdown, onSentenceComplete]);
 
   // Shadow mode: auto-pause on new line.
   //
   // We always clear any running timer when activeLine changes (including on
   // manual seeks). This prevents a stale timer from an old line firing and
-  // resuming playback at the wrong moment. shadowPausedRef is also reset so
-  // the new line always gets its own fresh pause.
+  // resuming playback at the wrong moment.
   useEffect(() => {
     if (mode !== 'shadow') return;
 
@@ -72,41 +113,15 @@ export default function SubtitlePlayer({
 
     if (!activeLine) return;
 
-    // Same line as before — nothing to do.
+    // Same line index as before — nothing to do.
     if (prevLineRef.current?.index === activeLine.index) return;
     prevLineRef.current = activeLine;
 
     // Reset the pause guard so this new line always triggers a fresh pause.
     shadowPausedRef.current = false;
 
-    if (videoRef.current) {
-      videoRef.current.pause();
-      shadowPausedRef.current = true;
-
-      const totalMs = shadowPauseMs(activeLine, pauseCapMs);
-
-      // Start the live countdown ticker (updates every 100ms for smooth display)
-      let remaining = totalMs;
-      setCountdown(remaining);
-      countdownIntervalRef.current = setInterval(() => {
-        remaining -= 100;
-        if (remaining <= 0) {
-          clearCountdown();
-        } else {
-          setCountdown(remaining);
-        }
-      }, 100);
-
-      resumeTimerRef.current = setTimeout(() => {
-        resumeTimerRef.current = null;
-        clearCountdown();
-        if (videoRef.current) videoRef.current.play();
-        shadowPausedRef.current = false;
-        onSentenceComplete?.(activeLine);
-      }, totalMs);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLine, mode, videoRef, onSentenceComplete, pauseCapMs]);
+    startShadowPause(activeLine);
+  }, [activeLine, mode, clearCountdown, startShadowPause]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -134,14 +149,25 @@ export default function SubtitlePlayer({
           break;
         }
         case 'h': setHidden(h => !h); break;
-        case 'r':
-          if (activeLine && videoRef.current) {
-            videoRef.current.currentTime = activeLine.start_ms / 1000;
-            videoRef.current.play();
+        case 'r': {
+          // FIX: Replay resets the video to line start AND restarts the full
+          // shadow pause + countdown from scratch for the same line. Previously
+          // the old countdown kept running (stale display) while the video
+          // replayed from the beginning of the line.
+          const line = activeLineRef.current;
+          if (line && videoRef.current) {
+            videoRef.current.currentTime = line.start_ms / 1000;
+            // Don't auto-play here — startShadowPause will pause immediately
+            // and begin a fresh countdown. The video plays when the timer fires.
+            // We also need to reset prevLineRef so the effect doesn't skip this
+            // line when activeLine hasn't changed index.
+            prevLineRef.current = null;
+            startShadowPause(line);
           }
           break;
+        }
         case 's':
-          if (activeLine) saveToVault(activeLine);
+          if (activeLineRef.current) saveToVault(activeLineRef.current);
           break;
         case 'arrowleft':
           if (videoRef.current) videoRef.current.currentTime -= 5;
@@ -153,7 +179,8 @@ export default function SubtitlePlayer({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeLine, videoRef]);
+  // Only depends on stable refs/callbacks — no re-registration every tick
+  }, [videoRef, clearCountdown, startShadowPause]);
 
   function saveToVault(line: SubtitleLine) {
     if (savedId === line.index) return;
@@ -183,9 +210,11 @@ export default function SubtitlePlayer({
   }
 
   function replayLine() {
-    if (activeLine && videoRef.current) {
-      videoRef.current.currentTime = activeLine.start_ms / 1000;
-      videoRef.current.play();
+    const line = activeLineRef.current;
+    if (line && videoRef.current) {
+      videoRef.current.currentTime = line.start_ms / 1000;
+      prevLineRef.current = null;
+      startShadowPause(line);
     }
   }
 

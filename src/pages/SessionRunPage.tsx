@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import VideoPlayer from '../components/VideoPlayer';
 import SubtitlePlayer from '../components/SubtitlePlayer';
@@ -38,6 +38,17 @@ export default function SessionRunPage() {
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
 
+  // FIX: Revoke the blob URL when this page unmounts to free the video file
+  // memory (can be hundreds of MB for a 20-minute 1080p video). This runs
+  // whether the user ends the session normally, navigates away, or the tab
+  // crashes — React’s cleanup guarantee covers all three cases.
+  const videoObjectURL = state?.videoObjectURL ?? '';
+  useEffect(() => {
+    return () => {
+      if (videoObjectURL) URL.revokeObjectURL(videoObjectURL);
+    };
+  }, [videoObjectURL]);
+
   if (!state?.anime) {
     return (
       <div className="text-center py-20 space-y-4">
@@ -50,7 +61,7 @@ export default function SessionRunPage() {
     );
   }
 
-  const { anime, episode, mode, videoObjectURL, videoFile } = state;
+  const { anime, episode, mode, videoFile } = state;
 
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
@@ -93,7 +104,6 @@ export default function SessionRunPage() {
     navigate('/session/feedback', { state: { session, savedCount, completedCount } });
   }
 
-  // Video ended — show confirmation overlay instead of jumping away
   function handleVideoEnded() {
     setVideoEnded(true);
   }
@@ -153,7 +163,7 @@ export default function SessionRunPage() {
         </div>
       </div>
 
-      {/* Transcribe panel — visible until done */}
+      {/* Transcribe panel — visible until transcription completes */}
       {!transcribeDone && (
         <TranscribePanel
           videoFile={videoFile ?? null}
