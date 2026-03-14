@@ -26,12 +26,19 @@ type ProgressCallback = (event: TranscribeProgressEvent) => void;
 let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
 
+// FIX: Track which model is already loaded in the worker so we never send a
+// redundant "load" message on subsequent calls to transcribeVideoFile.
+// If the user switches to a different model we re-load as needed.
+let loadedModel: string | null = null;
+
 function getWorker(): Worker {
   if (!worker) {
     worker = new Worker(
       new URL('./transcribeWorker.ts', import.meta.url),
       { type: 'module' }
     );
+    // Reset the loaded-model flag whenever the worker is (re)created.
+    loadedModel = null;
   }
   return worker;
 }
@@ -100,7 +107,14 @@ export async function transcribeVideoFile(
   progressCb?.({ status: 'decoded' });
 
   const w = getWorker();
-  await workerRoundTrip(w, { type: 'load', model }, [], 'ready');
+
+  // Only send "load" if this model hasn't been loaded yet in this worker
+  // instance. Skipping redundant loads saves ~1-2s on every subsequent
+  // transcription session and prevents double-initialisation side effects.
+  if (loadedModel !== model) {
+    await workerRoundTrip(w, { type: 'load', model }, [], 'ready');
+    loadedModel = model;
+  }
   progressCb?.({ status: 'ready' });
 
   const SAMPLE_RATE  = 16000;
@@ -167,4 +181,5 @@ export function transcribeAudioBuffer(
 export function destroyWorker(): void {
   worker?.terminate();
   worker = null;
+  loadedModel = null;
 }
