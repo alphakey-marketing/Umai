@@ -5,8 +5,7 @@
   "description": "Umai - Japanese Shadowing App",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc && vite build",
     "preview": "vite preview"
   },
   "keywords": [],

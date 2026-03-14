@@ -26,13 +26,18 @@ type ProgressCallback = (event: TranscribeProgressEvent) => void;
 let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
 
+// FIX: Track which model is already loaded in the worker so we never send a
+// redundant "load" message on subsequent calls to transcribeVideoFile.
+// If the user switches to a different model we re-load as needed.
 let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
-    // Classic worker (no type:'module') so importScripts() works inside it.
-    // The worker script lives in public/ and is served as a static asset.
-    worker = new Worker('/transcribeWorker.js');
+    worker = new Worker(
+      new URL('./transcribeWorker.ts', import.meta.url),
+      { type: 'module' }
+    );
+    // Reset the loaded-model flag whenever the worker is (re)created.
     loadedModel = null;
   }
   return worker;
@@ -77,6 +82,12 @@ function workerRoundTrip(
   });
 }
 
+/**
+ * Deduplicate subtitle lines at chunk boundaries.
+ * When two chunks overlap by 1s, the last line of chunk N and first line of
+ * chunk N+1 may cover the same timestamp range. Drop any incoming line whose
+ * start_ms is within 1500ms of the last accepted line's start_ms.
+ */
 function deduplicateLines(
   existing: SubtitleLine[],
   incoming: SubtitleLine[]
@@ -97,6 +108,9 @@ export async function transcribeVideoFile(
 
   const w = getWorker();
 
+  // Only send "load" if this model hasn't been loaded yet in this worker
+  // instance. Skipping redundant loads saves ~1-2s on every subsequent
+  // transcription session and prevents double-initialisation side effects.
   if (loadedModel !== model) {
     await workerRoundTrip(w, { type: 'load', model }, [], 'ready');
     loadedModel = model;
@@ -105,7 +119,7 @@ export async function transcribeVideoFile(
 
   const SAMPLE_RATE  = 16000;
   const CHUNK_FRAMES = 30 * SAMPLE_RATE;
-  const OVERLAP      = 1  * SAMPLE_RATE;
+  const OVERLAP      = 1  * SAMPLE_RATE;   // 1s overlap to avoid cutting mid-word
   const step         = CHUNK_FRAMES - OVERLAP;
   const totalFrames  = mono.length;
   const chunks: { data: Float32Array; offsetSec: number }[] = [];
@@ -129,9 +143,12 @@ export async function transcribeVideoFile(
       'chunkResult'
     ) as { lines: SubtitleLine[] };
 
-    const deduped    = deduplicateLines(allLines, result.lines);
-    const reindexed  = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
-    lineOffset      += reindexed.length;
+    // Deduplicate lines overlapping with previous chunk before merging
+    const deduped = deduplicateLines(allLines, result.lines);
+
+    // Re-index continuously
+    const reindexed = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
+    lineOffset += reindexed.length;
     allLines.push(...reindexed);
 
     progressCb?.({
