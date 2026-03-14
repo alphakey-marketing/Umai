@@ -1,13 +1,10 @@
 /**
  * settings.ts — persisted user preferences (localStorage)
- *
- * All settings are typed, defaulted, and read/written atomically.
- * Components consume these via the useSettings() hook (SettingsContext).
  */
 
 export type WhisperModel = 'Xenova/whisper-tiny' | 'Xenova/whisper-small' | 'Xenova/whisper-medium';
 export type JLPTGoal   = 'N5' | 'N4' | 'N3' | 'N2' | 'N1';
-export type AppTheme   = 'dark'; // light theme reserved for future
+export type AppTheme   = 'dark';
 
 export interface UserSettings {
   // Onboarding
@@ -19,15 +16,16 @@ export interface UserSettings {
   whisper_model:      WhisperModel;
 
   // Session behaviour
-  shadow_pause_extra_ms:  number;   // extra ms added after auto-pause (default 2000)
-  shadow_pause_cap_ms:    number;   // maximum shadow pause duration (default 12000)
-  auto_advance:           boolean;  // auto-advance after pause timer (default false)
-  show_romaji:            boolean;  // show romaji below Japanese text (default false)
-
-  // Notifications / sound
-  line_complete_sound:    boolean;  // play a soft chime on line complete (default true)
-
-  // Data
+  /**
+   * How many ms AFTER a line's start_ms the video pauses so the user
+   * can shadow. 2000 = shadow 2 s after speaker starts (easiest),
+   * 1000 = 1 s (medium), 500 = 0.5 s (hardest / near-simultaneous).
+   */
+  shadow_delay_ms:        number;
+  shadow_pause_cap_ms:    number;   // maximum shadow speaking window (default 12000)
+  auto_advance:           boolean;
+  show_romaji:            boolean;
+  line_complete_sound:    boolean;
   data_export_format:     'anki' | 'csv' | 'json';
 }
 
@@ -36,7 +34,7 @@ const DEFAULTS: UserSettings = {
   display_name:          '',
   jlpt_goal:             'N4',
   whisper_model:         'Xenova/whisper-small',
-  shadow_pause_extra_ms: 2000,
+  shadow_delay_ms:       2000,
   shadow_pause_cap_ms:   12000,
   auto_advance:          false,
   show_romaji:           false,
@@ -50,7 +48,6 @@ export function loadSettings(): UserSettings {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { ...DEFAULTS };
-    // Merge stored with defaults so new fields always have a value
     return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
     return { ...DEFAULTS };
