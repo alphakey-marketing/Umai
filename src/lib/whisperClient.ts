@@ -25,14 +25,18 @@ type ProgressCallback = (event: TranscribeProgressEvent) => void;
 
 let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
-
 let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
-    // Classic worker (no type:'module') so importScripts() works inside it.
-    // The worker script lives in public/ and is served as a static asset.
-    worker = new Worker('/transcribeWorker.js');
+    // ES module worker — Vite bundles transcribeWorker.ts and all its
+    // imports (@xenova/transformers) into a single worker chunk.
+    // vite.config.ts sets the worker esbuild target to esnext so BigInt
+    // literals in the library are preserved (not transpiled away).
+    worker = new Worker(
+      new URL('./transcribeWorker.ts', import.meta.url),
+      { type: 'module' }
+    );
     loadedModel = null;
   }
   return worker;
@@ -82,7 +86,7 @@ function deduplicateLines(
   incoming: SubtitleLine[]
 ): SubtitleLine[] {
   if (!existing.length) return incoming;
-  const lastStart = existing[existing.length - 1].start_ms;
+  const lastStart  = existing[existing.length - 1].start_ms;
   const OVERLAP_MS = 1500;
   return incoming.filter(l => l.start_ms > lastStart + OVERLAP_MS);
 }
@@ -129,9 +133,9 @@ export async function transcribeVideoFile(
       'chunkResult'
     ) as { lines: SubtitleLine[] };
 
-    const deduped    = deduplicateLines(allLines, result.lines);
-    const reindexed  = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
-    lineOffset      += reindexed.length;
+    const deduped   = deduplicateLines(allLines, result.lines);
+    const reindexed = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
+    lineOffset     += reindexed.length;
     allLines.push(...reindexed);
 
     progressCb?.({
