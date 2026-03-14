@@ -4,8 +4,9 @@
   "type": "module",
   "description": "Umai - Japanese Shadowing App",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/copy-transformers.js && vite",
+    "build": "node scripts/copy-transformers.js && vite build",
+    "postinstall": "node scripts/copy-transformers.js",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
