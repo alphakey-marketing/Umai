@@ -38,21 +38,40 @@ export default function SubtitlePlayer({
   const shadowPausedRef         = useRef(false);
   const resumeTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Shadow mode: auto-pause on new line
+  // Shadow mode: auto-pause on new line.
+  //
+  // FIX: We always clear any running timer when activeLine changes (including
+  // on manual seeks). This prevents a stale timer from an old line firing and
+  // resuming playback at the wrong moment. shadowPausedRef is also reset so
+  // the new line always gets its own fresh pause — otherwise seeking forward
+  // while already paused would silently skip the new line's pause window.
   useEffect(() => {
     if (mode !== 'shadow') return;
+
+    // Always cancel any pending auto-resume when the active line changes,
+    // regardless of whether we are currently in a shadow pause.
+    if (resumeTimerRef.current) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+
     if (!activeLine) return;
+
+    // Same line as before — nothing to do (guards against currentMs ticks
+    // within the same subtitle line without a real line change).
     if (prevLineRef.current?.index === activeLine.index) return;
     prevLineRef.current = activeLine;
 
-    if (videoRef.current && !shadowPausedRef.current) {
+    // Reset the pause guard so this new line always triggers a fresh pause,
+    // even if the previous line's timer was still running when we seeked.
+    shadowPausedRef.current = false;
+
+    if (videoRef.current) {
       videoRef.current.pause();
       shadowPausedRef.current = true;
 
-      // Clear any previous timer
-      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
-
       resumeTimerRef.current = setTimeout(() => {
+        resumeTimerRef.current = null;
         if (videoRef.current) videoRef.current.play();
         shadowPausedRef.current = false;
         onSentenceComplete?.(activeLine);
