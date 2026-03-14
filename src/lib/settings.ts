@@ -19,8 +19,9 @@ export interface UserSettings {
   whisper_model:      WhisperModel;
 
   // Session behaviour
-  shadow_pause_extra_ms:  number;   // extra ms added after auto-pause (default 2000)
-  shadow_pause_cap_ms:    number;   // maximum shadow pause duration (default 12000)
+  /** How long after line start_ms before the video pauses for shadowing (ms). */
+  shadow_delay_ms:        number;   // 500 / 1000 / 2000  (default 2000 = Easy)
+  shadow_pause_cap_ms:    number;   // maximum shadow speaking window (default 12000)
   auto_advance:           boolean;  // auto-advance after pause timer (default false)
   show_romaji:            boolean;  // show romaji below Japanese text (default false)
 
@@ -32,16 +33,16 @@ export interface UserSettings {
 }
 
 const DEFAULTS: UserSettings = {
-  onboarded:             false,
-  display_name:          '',
-  jlpt_goal:             'N4',
-  whisper_model:         'Xenova/whisper-small',
-  shadow_pause_extra_ms: 2000,
-  shadow_pause_cap_ms:   12000,
-  auto_advance:          false,
-  show_romaji:           false,
-  line_complete_sound:   true,
-  data_export_format:    'anki',
+  onboarded:          false,
+  display_name:       '',
+  jlpt_goal:          'N4',
+  whisper_model:      'Xenova/whisper-small',
+  shadow_delay_ms:    2000,
+  shadow_pause_cap_ms: 12000,
+  auto_advance:       false,
+  show_romaji:        false,
+  line_complete_sound: true,
+  data_export_format:  'anki',
 };
 
 const KEY = 'umai_settings';

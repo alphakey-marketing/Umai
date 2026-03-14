@@ -38,6 +38,13 @@ const PAUSE_CAP_OPTIONS: { label: string; value: number; hint: string }[] = [
   { label: '20s', value: 20000, hint: 'N2–N1 / dense speech' },
 ];
 
+// Shadow delay options
+const SHADOW_DELAY_OPTIONS: { label: string; value: number; hint: string }[] = [
+  { label: '2s',   value: 2000, hint: 'Easy'   },
+  { label: '1s',   value: 1000, hint: 'Medium' },
+  { label: '0.5s', value: 500,  hint: 'Hard'   },
+];
+
 export default function SettingsPage() {
   const { settings, update } = useSettings();
   const [saved, setSaved]    = useState(false);
@@ -151,24 +158,31 @@ export default function SettingsPage() {
 
       {/* Session behaviour */}
       <Section title="🎬 Session Behaviour">
-        <Field label="Extra pause after each line" hint="How long Umai waits before you can advance">
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={0} max={6000} step={500}
-              value={settings.shadow_pause_extra_ms}
-              onChange={e => update({ shadow_pause_extra_ms: Number(e.target.value) })}
-              onMouseUp={flash}
-              onTouchEnd={flash}
-              className="flex-1 accent-indigo-500"
-            />
-            <span className="text-sm font-bold w-16 text-right">
-              {settings.shadow_pause_extra_ms === 0 ? 'Off' : `${settings.shadow_pause_extra_ms / 1000}s`}
-            </span>
+
+        {/* Shadow delay — replaces old shadow_pause_extra_ms slider */}
+        <Field
+          label="Shadow delay"
+          hint="How long after the speaker starts talking before the video pauses for you to shadow"
+        >
+          <div className="flex gap-2">
+            {SHADOW_DELAY_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { update({ shadow_delay_ms: opt.value }); flash(); }}
+                className={`flex-1 flex flex-col items-center py-2.5 rounded-xl border-2 font-bold text-sm transition-all ${
+                  settings.shadow_delay_ms === opt.value
+                    ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300'
+                    : 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600'
+                }`}
+              >
+                <span>{opt.label}</span>
+                <span className="text-xs font-normal text-gray-500 mt-0.5">{opt.hint}</span>
+              </button>
+            ))}
           </div>
         </Field>
 
-        {/* Max pause cap — 3-option button group */}
+        {/* Max pause cap */}
         <Field
           label="Max shadow pause"
           hint="Hard cap on how long Umai pauses between lines. Raise this for dense N2/N1 dialogue."

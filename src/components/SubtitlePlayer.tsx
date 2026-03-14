@@ -11,51 +11,106 @@ interface Props {
   episodeNumber: number;
   videoRef: React.RefObject<HTMLVideoElement>;
   mode: 'watch' | 'shadow' | 'dictation';
+  /** How long after line start_ms before video pauses (ms). 500 / 1000 / 2000 */
+  shadowDelayMs?: number;
   onSentenceComplete?: (line: SubtitleLine) => void;
   onSaved?: (entry: VaultEntry) => void;
 }
 
-function shadowPauseMs(line: SubtitleLine): number {
-  const lineDuration = line.end_ms - line.start_ms;
-  const charCount    = line.text.replace(/\s/g, '').length;
-  const repeatMs     = Math.max(charCount * 130, 2000);
-  return Math.min(lineDuration + repeatMs + 800, 12000);
+/** ms the user gets to speak, based on character count */
+function speakingWindowMs(line: SubtitleLine, cap: number): number {
+  const charCount = line.text.replace(/\s/g, '').length;
+  return Math.min(Math.max(charCount * 130, 2000), cap);
 }
+
+const DELAY_OPTIONS: { label: string; value: number; hint: string }[] = [
+  { label: '2s', value: 2000, hint: 'Easy'   },
+  { label: '1s', value: 1000, hint: 'Medium' },
+  { label: '0.5s', value: 500, hint: 'Hard'  },
+];
 
 export default function SubtitlePlayer({
   lines, currentMs, animeId, animeName, episodeNumber,
-  videoRef, mode, onSentenceComplete, onSaved,
+  videoRef, mode,
+  shadowDelayMs: shadowDelayMsProp = 2000,
+  onSentenceComplete, onSaved,
 }: Props) {
-  const activeLine          = getActiveLine(lines, currentMs);
-  const [hidden, setHidden] = useState(mode === 'dictation');
+  const activeLine              = getActiveLine(lines, currentMs);
+  const [hidden, setHidden]     = useState(mode === 'dictation');
   const [savedId, setSavedId]   = useState<number | null>(null);
   const [toast, setToast]       = useState<string | null>(null);
-  const prevLineRef             = useRef<SubtitleLine | null>(null);
-  const shadowPausedRef         = useRef(false);
-  const resumeTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Inline delay selector — starts from prop, user can change mid-session
+  const [delayMs, setDelayMs]   = useState(shadowDelayMsProp);
+
+  // Phase tracking: null = idle, 'listening' = delay countdown, 'shadowing' = speaking window
+  const [phase, setPhase]       = useState<'idle' | 'listening' | 'shadowing'>('idle');
+  const [countdown, setCountdown] = useState(0); // seconds remaining in listening phase
+
+  const prevLineRef             = useRef<SubtitleLine | null>(null);
+  const delayTimerRef           = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumeTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function clearAll() {
+    if (delayTimerRef.current)        { clearTimeout(delayTimerRef.current);         delayTimerRef.current = null; }
+    if (resumeTimerRef.current)       { clearTimeout(resumeTimerRef.current);        resumeTimerRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+  }
+
+  // ── Two-phase shadow timing ──────────────────────────────────────────────
   useEffect(() => {
     if (mode !== 'shadow') return;
-    if (resumeTimerRef.current) {
-      clearTimeout(resumeTimerRef.current);
-      resumeTimerRef.current = null;
-    }
-    if (!activeLine) return;
-    if (prevLineRef.current?.index === activeLine.index) return;
+
+    // New line detected
+    if (!activeLine || prevLineRef.current?.index === activeLine.index) return;
     prevLineRef.current = activeLine;
-    shadowPausedRef.current = false;
-    if (videoRef.current) {
+
+    clearAll();
+    setPhase('idle');
+
+    // How far into the line are we already? (e.g. user seeked into the middle)
+    const elapsed = Math.max(0, currentMs - activeLine.start_ms);
+    const remainingDelay = Math.max(0, delayMs - elapsed);
+
+    // Phase 1 — listening: video keeps playing, show countdown
+    const delaySec = Math.ceil(remainingDelay / 1000);
+    setCountdown(delaySec);
+    if (delaySec > 0) setPhase('listening');
+
+    countdownIntervalRef.current = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(countdownIntervalRef.current!);
+          countdownIntervalRef.current = null;
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+
+    delayTimerRef.current = setTimeout(() => {
+      delayTimerRef.current = null;
+      if (!videoRef.current) return;
+
+      // Phase 2 — shadowing: pause video, user speaks
       videoRef.current.pause();
-      shadowPausedRef.current = true;
+      setPhase('shadowing');
+
+      const windowMs = speakingWindowMs(activeLine, 12000);
       resumeTimerRef.current = setTimeout(() => {
         resumeTimerRef.current = null;
+        setPhase('idle');
         if (videoRef.current) videoRef.current.play();
-        shadowPausedRef.current = false;
         onSentenceComplete?.(activeLine);
-      }, shadowPauseMs(activeLine));
-    }
-  }, [activeLine, mode, videoRef, onSentenceComplete]);
+      }, windowMs);
+    }, remainingDelay);
 
+    return clearAll;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLine?.index, mode]);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
@@ -65,15 +120,11 @@ export default function SubtitlePlayer({
           e.preventDefault();
           if (!videoRef.current) break;
           if (videoRef.current.paused) {
-            if (resumeTimerRef.current) {
-              clearTimeout(resumeTimerRef.current);
-              resumeTimerRef.current = null;
-            }
-            shadowPausedRef.current = false;
+            clearAll();
+            setPhase('idle');
             videoRef.current.play();
           } else {
             videoRef.current.pause();
-            shadowPausedRef.current = true;
           }
           break;
         }
@@ -141,6 +192,23 @@ export default function SubtitlePlayer({
         </div>
       )}
       <div className="rounded-2xl bg-gray-900 border border-gray-800 p-4 min-h-[80px] flex flex-col gap-3">
+
+        {/* Phase indicator — only in shadow mode */}
+        {mode === 'shadow' && phase === 'listening' && (
+          <div className="flex items-center justify-center gap-2 py-1 animate-pulse">
+            <span className="text-lg">🎧</span>
+            <span className="text-sm font-semibold text-indigo-300">
+              Listen… shadow in {countdown}s
+            </span>
+          </div>
+        )}
+        {mode === 'shadow' && phase === 'shadowing' && (
+          <div className="flex items-center justify-center gap-2 py-1">
+            <span className="text-lg">🗣️</span>
+            <span className="text-sm font-semibold text-green-400">Shadow now!</span>
+          </div>
+        )}
+
         <div className="text-center">
           {activeLine ? (
             hidden ? (
@@ -154,6 +222,7 @@ export default function SubtitlePlayer({
             <p className="text-sm text-gray-600 italic">...</p>
           )}
         </div>
+
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
             <ControlBtn onClick={replayLine}          title="Replay (R)"           emoji="🔁" />
@@ -178,10 +247,28 @@ export default function SubtitlePlayer({
             </button>
           )}
         </div>
+
         <div className="flex items-center justify-between">
           <ModeBadge mode={mode} />
-          {mode === 'shadow' && activeLine ? (
-            <p className="text-xs text-gray-600">⏱ {(shadowPauseMs(activeLine) / 1000).toFixed(1)}s · Space to pause/resume</p>
+          {mode === 'shadow' ? (
+            /* Inline delay selector */
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-500">Delay:</span>
+              {DELAY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDelayMs(opt.value)}
+                  title={opt.hint}
+                  className={`text-xs font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                    delayMs === opt.value
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           ) : (
             <p className="text-xs text-gray-600">Space · pause &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save</p>
           )}

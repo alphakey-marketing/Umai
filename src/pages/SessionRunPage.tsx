@@ -171,7 +171,7 @@ export default function SessionRunPage() {
           episodeNumber={episode?.episode_number ?? 1}
           videoRef={videoRef}
           mode={mode}
-          pauseCapMs={settings.shadow_pause_cap_ms}
+          shadowDelayMs={settings.shadow_delay_ms}
           onSentenceComplete={handleSentenceComplete}
           onSaved={handleSaved}
         />
