@@ -31,6 +31,13 @@ const WHISPER_MODELS: { value: WhisperModel; label: string; size: string; qualit
 
 const JLPT_LEVELS: JLPTGoal[] = ['N5', 'N4', 'N3', 'N2', 'N1'];
 
+// Pause cap options: label shown in UI, value stored in ms
+const PAUSE_CAP_OPTIONS: { label: string; value: number; hint: string }[] = [
+  { label: '10s', value: 10000, hint: 'N5–N3 / fast pace' },
+  { label: '15s', value: 15000, hint: 'N3–N2 / recommended' },
+  { label: '20s', value: 20000, hint: 'N2–N1 / dense speech' },
+];
+
 export default function SettingsPage() {
   const { settings, update } = useSettings();
   const [saved, setSaved]    = useState(false);
@@ -158,6 +165,29 @@ export default function SettingsPage() {
             <span className="text-sm font-bold w-16 text-right">
               {settings.shadow_pause_extra_ms === 0 ? 'Off' : `${settings.shadow_pause_extra_ms / 1000}s`}
             </span>
+          </div>
+        </Field>
+
+        {/* Max pause cap — 3-option button group */}
+        <Field
+          label="Max shadow pause"
+          hint="Hard cap on how long Umai pauses between lines. Raise this for dense N2/N1 dialogue."
+        >
+          <div className="flex gap-2">
+            {PAUSE_CAP_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { update({ shadow_pause_cap_ms: opt.value }); flash(); }}
+                className={`flex-1 flex flex-col items-center py-2.5 rounded-xl border-2 font-bold text-sm transition-all ${
+                  settings.shadow_pause_cap_ms === opt.value
+                    ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300'
+                    : 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600'
+                }`}
+              >
+                <span>{opt.label}</span>
+                <span className="text-xs font-normal text-gray-500 mt-0.5">{opt.hint}</span>
+              </button>
+            ))}
           </div>
         </Field>
 

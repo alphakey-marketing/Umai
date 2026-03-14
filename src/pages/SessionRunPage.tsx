@@ -4,6 +4,7 @@ import VideoPlayer from '../components/VideoPlayer';
 import SubtitlePlayer from '../components/SubtitlePlayer';
 import TranscribePanel from '../components/TranscribePanel';
 import { saveShadowSession, recordTodayActivity } from '../lib/shadowStorage';
+import { useSettings } from '../lib/settingsContext';
 import type {
   AnimeTitle, AnimeEpisode, ShadowingMode,
   SubtitleLine, ShadowingSession, VaultEntry,
@@ -25,6 +26,7 @@ export default function SessionRunPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const state    = location.state as LocationState | null;
+  const { settings } = useSettings();
 
   const videoRef                            = useRef<HTMLVideoElement>(null);
   const [currentMs, setCurrentMs]           = useState(0);
@@ -170,6 +172,7 @@ export default function SessionRunPage() {
           episodeNumber={episode?.episode_number ?? 1}
           videoRef={videoRef}
           mode={mode}
+          pauseCapMs={settings.shadow_pause_cap_ms}
           onSentenceComplete={handleSentenceComplete}
           onSaved={handleSaved}
         />

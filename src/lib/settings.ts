@@ -20,6 +20,7 @@ export interface UserSettings {
 
   // Session behaviour
   shadow_pause_extra_ms:  number;   // extra ms added after auto-pause (default 2000)
+  shadow_pause_cap_ms:    number;   // maximum shadow pause duration (default 12000)
   auto_advance:           boolean;  // auto-advance after pause timer (default false)
   show_romaji:            boolean;  // show romaji below Japanese text (default false)
 
@@ -36,6 +37,7 @@ const DEFAULTS: UserSettings = {
   jlpt_goal:             'N4',
   whisper_model:         'Xenova/whisper-small',
   shadow_pause_extra_ms: 2000,
+  shadow_pause_cap_ms:   12000,
   auto_advance:          false,
   show_romaji:           false,
   line_complete_sound:   true,
