@@ -1,5 +1,9 @@
 /**
  * whisperClient.ts
+ *
+ * Decodes audio on the main thread, splits into 30s chunks,
+ * sends each chunk to the worker one-at-a-time, streams
+ * partial subtitle lines back, and deduplicates at boundaries.
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -21,10 +25,13 @@ type ProgressCallback = (event: TranscribeProgressEvent) => void;
 
 let worker: Worker | null = null;
 let progressCb: ProgressCallback | null = null;
+
 let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
+    // Classic worker (no type:'module') so importScripts() works inside it.
+    // The worker script lives in public/ and is served as a static asset.
     worker = new Worker('/transcribeWorker.js');
     loadedModel = null;
   }
@@ -114,6 +121,7 @@ export async function transcribeVideoFile(
 
   for (let i = 0; i < chunks.length; i++) {
     const { data, offsetSec } = chunks[i];
+
     const result = await workerRoundTrip(
       w,
       { type: 'transcribe', audioData: data, model, chunkIndex: i + 1, totalChunks, offsetSec },
@@ -121,9 +129,9 @@ export async function transcribeVideoFile(
       'chunkResult'
     ) as { lines: SubtitleLine[] };
 
-    const deduped   = deduplicateLines(allLines, result.lines);
-    const reindexed = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
-    lineOffset     += reindexed.length;
+    const deduped    = deduplicateLines(allLines, result.lines);
+    const reindexed  = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
+    lineOffset      += reindexed.length;
     allLines.push(...reindexed);
 
     progressCb?.({
@@ -135,6 +143,22 @@ export async function transcribeVideoFile(
   }
 
   return allLines;
+}
+
+export function transcribeAudioBuffer(
+  audioBuffer: AudioBuffer,
+  model = 'Xenova/whisper-tiny'
+): Promise<SubtitleLine[]> {
+  const numChannels = audioBuffer.numberOfChannels;
+  const length      = audioBuffer.length;
+  const mono        = new Float32Array(length);
+  for (let ch = 0; ch < numChannels; ch++) {
+    const chData = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) mono[i] += chData[i] / numChannels;
+  }
+  const blob = new Blob([mono.buffer], { type: 'audio/raw' });
+  const file = new File([blob], 'audio.raw');
+  return transcribeVideoFile(file, model);
 }
 
 export function destroyWorker(): void {

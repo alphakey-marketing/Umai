@@ -11,41 +11,45 @@ interface Props {
   episodeNumber: number;
   videoRef: React.RefObject<HTMLVideoElement>;
   mode: 'watch' | 'shadow' | 'dictation';
-  /** How many ms after sentence START to pause for shadowing. Default 2000ms. */
-  delayMs?: number;
+  /** Hard cap on shadow pause duration in ms. Comes from settings.shadow_pause_cap_ms. */
+  pauseCapMs?: number;
   onSentenceComplete?: (line: SubtitleLine) => void;
   onSaved?: (entry: VaultEntry) => void;
 }
 
 /**
- * Speaking window after pause fires.
- * User has max(charCount × 130ms, 2500ms) to shadow the sentence.
+ * Pause duration for shadow mode.
+ * lineDuration + max(charCount × 130ms, 2000ms) + 800ms, capped at pauseCapMs.
  */
-function speakingWindowMs(line: SubtitleLine): number {
-  const charCount = line.text.replace(/\s/g, '').length;
-  return Math.max(charCount * 130, 2500);
+function shadowPauseMs(line: SubtitleLine, capMs: number): number {
+  const lineDuration = line.end_ms - line.start_ms;
+  const charCount    = line.text.replace(/\s/g, '').length;
+  const repeatMs     = Math.max(charCount * 130, 2000);
+  return Math.min(lineDuration + repeatMs + 800, capMs);
 }
 
 export default function SubtitlePlayer({
   lines, currentMs, animeId, animeName, episodeNumber,
   videoRef, mode,
-  delayMs = 2000,
+  pauseCapMs = 12000,
   onSentenceComplete, onSaved,
 }: Props) {
-  const activeLine                  = getActiveLine(lines, currentMs);
-  const [hidden, setHidden]         = useState(mode === 'dictation');
+  const activeLine          = getActiveLine(lines, currentMs);
+  const [hidden, setHidden] = useState(mode === 'dictation');
   const [savedId, setSavedId]       = useState<number | null>(null);
   const [toast, setToast]           = useState<string | null>(null);
+  // countdown: ms remaining in the current shadow pause (null = not paused)
   const [countdown, setCountdown]   = useState<number | null>(null);
-  // Live-adjustable delay — starts from prop, user can toggle during session
-  const [activeDelay, setActiveDelay] = useState(delayMs);
   const prevLineRef                 = useRef<SubtitleLine | null>(null);
   const shadowPausedRef             = useRef(false);
   const resumeTimerRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Keep a stable ref to activeLine so keyboard handler can read it without
+  // being in the dependency array (avoids re-registering keydown every tick)
   const activeLineRef               = useRef<SubtitleLine | null>(null);
   activeLineRef.current             = activeLine;
 
+  // Helper: stop the live countdown ticker
   const clearCountdown = useCallback(() => {
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
@@ -54,58 +58,53 @@ export default function SubtitlePlayer({
     setCountdown(null);
   }, []);
 
-  const startShadowPause = useCallback((line: SubtitleLine, pauseAfterMs: number) => {
+  // Helper: start a fresh pause + countdown for a given line.
+  // Used both by the auto-pause effect and by the R-key replay handler.
+  const startShadowPause = useCallback((line: SubtitleLine) => {
     if (!videoRef.current) return;
 
+    // Cancel any currently running timer/countdown first
     if (resumeTimerRef.current) {
       clearTimeout(resumeTimerRef.current);
       resumeTimerRef.current = null;
     }
     clearCountdown();
 
-    // Schedule pause to fire at start_ms + pauseAfterMs.
-    // If the video is already past that point, fire immediately.
-    const nowMs       = videoRef.current.currentTime * 1000;
-    const pauseAtMs   = line.start_ms + pauseAfterMs;
-    const waitMs      = Math.max(0, pauseAtMs - nowMs);
-    const speakMs     = speakingWindowMs(line);
-    const totalMs     = waitMs + speakMs;
+    videoRef.current.pause();
+    shadowPausedRef.current = true;
 
-    // Countdown covers only the speaking window (after the pause fires)
-    let remaining = speakMs;
+    const totalMs = shadowPauseMs(line, pauseCapMs);
+
+    // Start the live countdown ticker (100ms resolution for smooth display)
+    let remaining = totalMs;
+    setCountdown(remaining);
+    countdownIntervalRef.current = setInterval(() => {
+      remaining -= 100;
+      if (remaining <= 0) {
+        clearCountdown();
+      } else {
+        setCountdown(remaining);
+      }
+    }, 100);
 
     resumeTimerRef.current = setTimeout(() => {
-      // Fire the actual pause
-      if (videoRef.current) videoRef.current.pause();
-      shadowPausedRef.current = true;
+      resumeTimerRef.current = null;
+      clearCountdown();
+      if (videoRef.current) videoRef.current.play();
+      shadowPausedRef.current = false;
+      onSentenceComplete?.(line);
+    }, totalMs);
+  }, [videoRef, pauseCapMs, clearCountdown, onSentenceComplete]);
 
-      setCountdown(remaining);
-      countdownIntervalRef.current = setInterval(() => {
-        remaining -= 100;
-        if (remaining <= 0) {
-          clearCountdown();
-        } else {
-          setCountdown(remaining);
-        }
-      }, 100);
-
-      // Resume after speaking window
-      resumeTimerRef.current = setTimeout(() => {
-        resumeTimerRef.current = null;
-        clearCountdown();
-        if (videoRef.current) videoRef.current.play();
-        shadowPausedRef.current = false;
-        onSentenceComplete?.(line);
-      }, speakMs);
-
-    }, waitMs);
-
-  }, [videoRef, clearCountdown, onSentenceComplete]);
-
-  // Shadow mode: auto-pause on new line
+  // Shadow mode: auto-pause on new line.
+  //
+  // We always clear any running timer when activeLine changes (including on
+  // manual seeks). This prevents a stale timer from an old line firing and
+  // resuming playback at the wrong moment.
   useEffect(() => {
     if (mode !== 'shadow') return;
 
+    // Always cancel pending auto-resume + countdown when the active line changes.
     if (resumeTimerRef.current) {
       clearTimeout(resumeTimerRef.current);
       resumeTimerRef.current = null;
@@ -113,24 +112,33 @@ export default function SubtitlePlayer({
     clearCountdown();
 
     if (!activeLine) return;
+
+    // Same line index as before — nothing to do.
     if (prevLineRef.current?.index === activeLine.index) return;
     prevLineRef.current = activeLine;
+
+    // Reset the pause guard so this new line always triggers a fresh pause.
     shadowPausedRef.current = false;
 
-    startShadowPause(activeLine, activeDelay);
-  }, [activeLine, mode, clearCountdown, startShadowPause, activeDelay]);
+    startShadowPause(activeLine);
+  }, [activeLine, mode, clearCountdown, startShadowPause]);
 
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
       switch (e.key.toLowerCase()) {
-        case ' ':
+        case ' ':   // Space — manual pause/resume
         case 'p': {
           e.preventDefault();
           if (!videoRef.current) break;
           if (videoRef.current.paused) {
-            if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null; }
+            // Cancel auto-timer so user controls resume
+            if (resumeTimerRef.current) {
+              clearTimeout(resumeTimerRef.current);
+              resumeTimerRef.current = null;
+            }
             clearCountdown();
             shadowPausedRef.current = false;
             videoRef.current.play();
@@ -142,11 +150,19 @@ export default function SubtitlePlayer({
         }
         case 'h': setHidden(h => !h); break;
         case 'r': {
+          // FIX: Replay resets the video to line start AND restarts the full
+          // shadow pause + countdown from scratch for the same line. Previously
+          // the old countdown kept running (stale display) while the video
+          // replayed from the beginning of the line.
           const line = activeLineRef.current;
           if (line && videoRef.current) {
             videoRef.current.currentTime = line.start_ms / 1000;
+            // Don't auto-play here — startShadowPause will pause immediately
+            // and begin a fresh countdown. The video plays when the timer fires.
+            // We also need to reset prevLineRef so the effect doesn't skip this
+            // line when activeLine hasn't changed index.
             prevLineRef.current = null;
-            startShadowPause(line, activeDelay);
+            startShadowPause(line);
           }
           break;
         }
@@ -163,7 +179,8 @@ export default function SubtitlePlayer({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [videoRef, clearCountdown, startShadowPause, activeDelay]);
+  // Only depends on stable refs/callbacks — no re-registration every tick
+  }, [videoRef, clearCountdown, startShadowPause]);
 
   function saveToVault(line: SubtitleLine) {
     if (savedId === line.index) return;
@@ -197,14 +214,15 @@ export default function SubtitlePlayer({
     if (line && videoRef.current) {
       videoRef.current.currentTime = line.start_ms / 1000;
       prevLineRef.current = null;
-      startShadowPause(line, activeDelay);
+      startShadowPause(line);
     }
   }
 
-  const isCountingDown = countdown !== null && activeLine !== null;
-  const speakMs        = activeLine ? speakingWindowMs(activeLine) : 1;
-  const countdownSec   = countdown !== null ? (countdown / 1000).toFixed(1) : null;
-  const barPct         = isCountingDown ? Math.max(0, (countdown! / speakMs) * 100) : 0;
+  // Derived values for countdown bar display
+  const isCountingDown  = countdown !== null && activeLine !== null;
+  const totalPauseMs    = activeLine ? shadowPauseMs(activeLine, pauseCapMs) : 1;
+  const countdownSec    = countdown !== null ? (countdown / 1000).toFixed(1) : null;
+  const barPct          = isCountingDown ? Math.max(0, (countdown! / totalPauseMs) * 100) : 0;
 
   return (
     <div className="relative">
@@ -230,7 +248,7 @@ export default function SubtitlePlayer({
           )}
         </div>
 
-        {/* Countdown bar */}
+        {/* Live countdown bar — only visible during a shadow pause */}
         {isCountingDown && (
           <div className="space-y-1">
             <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
@@ -248,7 +266,7 @@ export default function SubtitlePlayer({
         {/* Controls */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
-            <ControlBtn onClick={replayLine} title="Replay (R)" emoji="🔁" />
+            <ControlBtn onClick={replayLine}          title="Replay (R)"           emoji="🔁" />
             <ControlBtn
               onClick={() => setHidden(h => !h)}
               title="Hide/show subtitle (H)"
@@ -256,27 +274,6 @@ export default function SubtitlePlayer({
               active={hidden}
             />
           </div>
-
-          {/* Live delay toggle */}
-          {mode === 'shadow' && (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-500 mr-1">Delay:</span>
-              {[2000, 1000, 500].map(d => (
-                <button
-                  key={d}
-                  onClick={() => setActiveDelay(d)}
-                  className={`text-xs px-2 py-0.5 rounded-full font-bold transition-colors ${
-                    activeDelay === d
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-                >
-                  {d / 1000}s
-                </button>
-              ))}
-            </div>
-          )}
-
           {activeLine && (
             <button
               onClick={() => saveToVault(activeLine)}
@@ -292,15 +289,14 @@ export default function SubtitlePlayer({
           )}
         </div>
 
-        {/* Mode badge */}
+        {/* Mode badge + hint */}
         <div className="flex items-center justify-between">
           <ModeBadge mode={mode} />
-          {mode === 'shadow' && !isCountingDown && (
-            <p className="text-xs text-gray-600">Pauses {activeDelay / 1000}s after sentence starts</p>
-          )}
-          {mode !== 'shadow' && (
+          {mode === 'shadow' && !isCountingDown && activeLine ? (
+            <p className="text-xs text-gray-600">⏱ up to {(pauseCapMs / 1000).toFixed(0)}s · Space to pause</p>
+          ) : mode !== 'shadow' ? (
             <p className="text-xs text-gray-600">Space · pause &nbsp;·&nbsp; R · replay &nbsp;·&nbsp; S · save</p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

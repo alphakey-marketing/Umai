@@ -1,5 +1,7 @@
 /**
  * TranscribePanel — in-browser Whisper transcription UI with streaming support.
+ * Calls onResult() after every chunk so the user can start shadowing immediately.
+ * Calls onDone() once the final complete subtitle set is ready.
  */
 import { useState, useCallback } from 'react';
 import {
@@ -13,6 +15,7 @@ import type { SubtitleLine } from '../types/index';
 interface Props {
   videoFile: File | null;
   onResult: (lines: SubtitleLine[]) => void;
+  /** Called once with the final complete subtitle set when transcription finishes. */
   onDone?: (lines: SubtitleLine[]) => void;
 }
 
@@ -58,7 +61,7 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         setPhase('loading-model');
         setProgress(pct);
         setStatus(`Downloading model — ${pct}%`);
-        setSubMsg(ev.file ?? '');
+        setSubMsg(ev.file ? `${ev.file}` : '');
       } else if (ev.status === 'done') {
         setSubMsg(ev.file ? `✓ ${ev.file}` : '✓ Loaded');
       } else if (ev.status === 'ready') {
@@ -75,6 +78,7 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         setProgress(pct);
         setStatus('Transcribing…');
         setSubMsg(`Chunk ${ci} / ${tc} — subtitles updating`);
+        // Stream partial lines to player immediately
         if (ev.partialLines && ev.partialLines.length > 0) {
           setStreaming(true);
           onResult(ev.partialLines);
@@ -88,8 +92,8 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
       setStatus(`Done — ${lines.length} subtitle lines`);
       setSubMsg('');
       setStreaming(false);
-      onResult(lines);
-      onDone?.(lines);
+      onResult(lines);   // final complete set for the player
+      onDone?.(lines);   // FIX: signal SessionRunPage to hide this panel
     } catch (e) {
       setPhase('error');
       setError((e as Error).message);
@@ -134,9 +138,11 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
     );
   }
 
-  if (phase === 'done') return null;
+  if (phase === 'done') return null; // subtitle player takes full focus when done
 
-  const barWidth   = phase === 'loading-model' || phase === 'transcribing' ? Math.max(progress, 2) : 30;
+  const barWidth   = phase === 'transcribing'  ? Math.max(progress, 2)
+                   : phase === 'loading-model' ? Math.max(progress, 2)
+                   : 30;
   const barAnimate = phase === 'decoding' || (phase === 'transcribing' && totalChunks === 0);
   const showCount  = phase === 'loading-model' || phase === 'transcribing';
 
@@ -150,18 +156,24 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         </div>
         {showCount && (
           <span className="text-xs font-bold text-indigo-400 shrink-0">
-            {phase === 'transcribing' && totalChunks > 0 ? `${chunkIndex} / ${totalChunks}` : `${progress}%`}
+            {phase === 'transcribing' && totalChunks > 0
+              ? `${chunkIndex} / ${totalChunks}`
+              : `${progress}%`}
           </span>
         )}
       </div>
       <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
         <div
-          className={`bg-indigo-500 h-1.5 rounded-full transition-all duration-500 ${barAnimate ? 'animate-pulse' : ''}`}
+          className={`bg-indigo-500 h-1.5 rounded-full transition-all duration-500 ${
+            barAnimate ? 'animate-pulse' : ''
+          }`}
           style={{ width: `${barWidth}%` }}
         />
       </div>
       {streaming && (
-        <p className="text-xs text-indigo-400 font-semibold">▶️ You can start shadowing! More subtitles loading…</p>
+        <p className="text-xs text-indigo-400 font-semibold">
+          ▶️ You can start shadowing! More subtitles loading…
+        </p>
       )}
     </div>
   );

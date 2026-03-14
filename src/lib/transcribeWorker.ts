@@ -1,10 +1,11 @@
 /**
- * transcribeWorker.ts — TYPE STUB ONLY
+ * transcribeWorker.ts
  *
- * The real worker lives in public/transcribeWorker.js (a classic Web Worker
- * loaded via new Worker('/transcribeWorker.js') in whisperClient.ts).
+ * This file is intentionally a type-only stub.
+ * The actual worker implementation lives in /public/transcribeWorker.js
+ * as a classic Worker script (not processed by Vite/esbuild) so that
+ * importScripts() and CDN-loaded BigInt-containing libraries work correctly.
  *
- * This file exists solely so TypeScript can resolve shared type imports
- * during type-checking. It is never imported or bundled at runtime.
+ * This stub exists only to satisfy any TypeScript imports of shared types.
  */
-export {};
+export type { SubtitleLine } from '../types/index';

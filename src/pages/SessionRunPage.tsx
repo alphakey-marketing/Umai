@@ -161,7 +161,7 @@ export default function SessionRunPage() {
         />
       )}
 
-      {/* Subtitle player */}
+      {/* Subtitle player — appears as soon as first partial lines arrive */}
       {hasLines && (
         <SubtitlePlayer
           lines={lines}
@@ -171,7 +171,6 @@ export default function SessionRunPage() {
           episodeNumber={episode?.episode_number ?? 1}
           videoRef={videoRef}
           mode={mode}
-          shadowDelayMs={settings.shadow_delay_ms}
           pauseCapMs={settings.shadow_pause_cap_ms}
           onSentenceComplete={handleSentenceComplete}
           onSaved={handleSaved}

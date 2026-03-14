@@ -31,16 +31,11 @@ const WHISPER_MODELS: { value: WhisperModel; label: string; size: string; qualit
 
 const JLPT_LEVELS: JLPTGoal[] = ['N5', 'N4', 'N3', 'N2', 'N1'];
 
+// Pause cap options: label shown in UI, value stored in ms
 const PAUSE_CAP_OPTIONS: { label: string; value: number; hint: string }[] = [
   { label: '10s', value: 10000, hint: 'N5–N3 / fast pace' },
   { label: '15s', value: 15000, hint: 'N3–N2 / recommended' },
   { label: '20s', value: 20000, hint: 'N2–N1 / dense speech' },
-];
-
-const SHADOW_DELAY_OPTIONS: { label: string; value: number; hint: string }[] = [
-  { label: '2s',   value: 2000, hint: 'Easy — clear gap to repeat' },
-  { label: '1s',   value: 1000, hint: 'Medium — natural rhythm' },
-  { label: '0.5s', value:  500, hint: 'Hard — near-simultaneous' },
 ];
 
 export default function SettingsPage() {
@@ -156,34 +151,27 @@ export default function SettingsPage() {
 
       {/* Session behaviour */}
       <Section title="🎬 Session Behaviour">
-
-        {/* Shadow delay */}
-        <Field
-          label="Shadow delay"
-          hint="How long after the speaker starts talking before the video pauses for you to shadow."
-        >
-          <div className="flex gap-2">
-            {SHADOW_DELAY_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => { update({ shadow_delay_ms: opt.value }); flash(); }}
-                className={`flex-1 flex flex-col items-center py-2.5 rounded-xl border-2 font-bold text-sm transition-all ${
-                  settings.shadow_delay_ms === opt.value
-                    ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300'
-                    : 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600'
-                }`}
-              >
-                <span>{opt.label}</span>
-                <span className="text-xs font-normal text-gray-500 mt-0.5">{opt.hint}</span>
-              </button>
-            ))}
+        <Field label="Extra pause after each line" hint="How long Umai waits before you can advance">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={0} max={6000} step={500}
+              value={settings.shadow_pause_extra_ms}
+              onChange={e => update({ shadow_pause_extra_ms: Number(e.target.value) })}
+              onMouseUp={flash}
+              onTouchEnd={flash}
+              className="flex-1 accent-indigo-500"
+            />
+            <span className="text-sm font-bold w-16 text-right">
+              {settings.shadow_pause_extra_ms === 0 ? 'Off' : `${settings.shadow_pause_extra_ms / 1000}s`}
+            </span>
           </div>
         </Field>
 
-        {/* Max pause cap */}
+        {/* Max pause cap — 3-option button group */}
         <Field
-          label="Max speaking window"
-          hint="How long you get to shadow each line before the video resumes."
+          label="Max shadow pause"
+          hint="Hard cap on how long Umai pauses between lines. Raise this for dense N2/N1 dialogue."
         >
           <div className="flex gap-2">
             {PAUSE_CAP_OPTIONS.map(opt => (
@@ -205,7 +193,7 @@ export default function SettingsPage() {
 
         <Toggle
           label="Auto-advance after pause"
-          hint="Automatically play the next line after the pause timer."
+          hint="Automatically play the next line after the pause timer. Good for watch mode."
           value={settings.auto_advance}
           onChange={v => { update({ auto_advance: v }); flash(); }}
         />
@@ -283,6 +271,7 @@ export default function SettingsPage() {
         </button>
       </Section>
 
+      {/* Save flash */}
       {saved && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg animate-fade-in">
           ✔ Saved
@@ -291,6 +280,8 @@ export default function SettingsPage() {
     </div>
   );
 }
+
+// ── sub-components ─────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
