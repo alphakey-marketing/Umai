@@ -1,37 +1,25 @@
 /**
- * public/transcribeWorker.js
+ * public/transcribeWorker.js — Classic Web Worker
  *
- * Classic Web Worker — loaded by whisperClient via:
- *   new Worker('/transcribeWorker.js')   (no type:'module')
+ * Loaded via: new Worker('/transcribeWorker.js')  (no type:'module')
  *
- * importScripts() works in classic workers and loads the UMD bundle
- * synchronously. The library JS never passes through Vite/esbuild so
- * BigInt literals inside @xenova/transformers are never a build issue.
+ * Loads @xenova/transformers from same-origin /transformers.min.js
+ * (copied from node_modules by the Vite copyTransformers plugin).
+ * Same-origin importScripts() is never blocked by CSP.
  */
 
-const CDN_URL =
-  'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
-
-let transformersLoaded = false;
-
-function ensureTransformers() {
-  if (transformersLoaded) return;
-  importScripts(CDN_URL);
-  transformersLoaded = true;
-}
+// Same-origin — never blocked by Replit CSP
+importScripts('/transformers.min.js');
 
 let currentModel = '';
-let transcriber = null;
+let transcriber  = null;
 
 async function getTranscriber(model) {
   if (transcriber && currentModel === model) return transcriber;
-  transcriber = null;
+  transcriber  = null;
   currentModel = model;
 
-  ensureTransformers();
-
   const { pipeline, env } = self.transformers;
-
   env.allowLocalModels = false;
   env.useBrowserCache  = true;
 
@@ -88,7 +76,6 @@ function wordsToSubtitleLines(words) {
   const MAX_DURATION_S = 8.0;
   const MAX_WORDS      = 15;
   const PUNCT          = /[\u3002\u3001\uff01\uff1f!?,\uff0c]/;
-
   const lines  = [];
   let buffer   = [];
   let lineIdx  = 0;
@@ -99,14 +86,12 @@ function wordsToSubtitleLines(words) {
     const end   = buffer[buffer.length - 1].timestamp[1]
                 ?? buffer[buffer.length - 1].timestamp[0] + 0.5;
     const text  = buffer.map(w => w.text).join('').trim();
-    if (text) {
-      lines.push({
-        index:    ++lineIdx,
-        start_ms: Math.round(start * 1000),
-        end_ms:   Math.round(end   * 1000),
-        text,
-      });
-    }
+    if (text) lines.push({
+      index:    ++lineIdx,
+      start_ms: Math.round(start * 1000),
+      end_ms:   Math.round(end   * 1000),
+      text,
+    });
     buffer = [];
   }
 
@@ -114,18 +99,15 @@ function wordsToSubtitleLines(words) {
     const word = words[i];
     const next = words[i + 1];
     buffer.push(word);
-
     const wordEnd     = word.timestamp[1] ?? word.timestamp[0] + 0.2;
     const gap         = next ? (next.timestamp[0] - wordEnd) : 999;
     const bufStart    = buffer[0].timestamp[0];
     const bufDuration = wordEnd - bufStart;
-
-    const hasPunct   = PUNCT.test(word.text);
-    const tooLong    = bufDuration  >= MAX_DURATION_S;
-    const tooManyW   = buffer.length >= MAX_WORDS;
-    const longPause  = gap          >= LONG_PAUSE;
-    const shortPause = gap          >= SHORT_PAUSE && hasPunct;
-
+    const hasPunct    = PUNCT.test(word.text);
+    const tooLong     = bufDuration  >= MAX_DURATION_S;
+    const tooManyW    = buffer.length >= MAX_WORDS;
+    const longPause   = gap          >= LONG_PAUSE;
+    const shortPause  = gap          >= SHORT_PAUSE && hasPunct;
     if (longPause || shortPause || tooLong || tooManyW) flush();
   }
   flush();
