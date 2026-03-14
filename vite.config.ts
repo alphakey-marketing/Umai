@@ -7,7 +7,21 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
   },
+  build: {
+    target: 'esnext',
+  },
+  worker: {
+    format: 'es',
+    rollupOptions: {
+      output: {
+        format: 'es',
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ['@xenova/transformers'],
+    esbuildOptions: {
+      target: 'esnext',
+    },
   },
 });
