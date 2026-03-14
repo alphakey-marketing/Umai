@@ -5,18 +5,19 @@ import SubtitlePlayer from '../components/SubtitlePlayer';
 import TranscribePanel from '../components/TranscribePanel';
 import { saveShadowSession, recordTodayActivity } from '../lib/shadowStorage';
 import { useSettings } from '../lib/settingsContext';
+import { getSessionVideo, revokeSessionVideo } from '../lib/sessionStore';
 import type {
   AnimeTitle, AnimeEpisode, ShadowingMode,
   SubtitleLine, ShadowingSession, VaultEntry,
 } from '../types';
 
+// Only serializable data travels through history.pushState.
+// File + videoObjectURL are read from sessionStore instead.
 interface LocationState {
-  anime: AnimeTitle;
-  episode: AnimeEpisode;
-  mode: ShadowingMode;
+  anime:         AnimeTitle;
+  episode:       AnimeEpisode;
+  mode:          ShadowingMode;
   subtitleLines: SubtitleLine[];
-  videoFile: File;
-  videoObjectURL: string;
 }
 
 const SPEEDS = [0.6, 0.8, 1.0] as const;
@@ -28,6 +29,10 @@ export default function SessionRunPage() {
   const state    = location.state as LocationState | null;
   const { settings } = useSettings();
 
+  // Read video file + blob URL from the module-level store — these cannot
+  // travel through history.pushState (File is not structured-cloneable).
+  const { videoFile, videoObjectURL } = getSessionVideo();
+
   const videoRef                            = useRef<HTMLVideoElement>(null);
   const [currentMs, setCurrentMs]           = useState(0);
   const [lines, setLines]                   = useState<SubtitleLine[]>(state?.subtitleLines ?? []);
@@ -38,21 +43,14 @@ export default function SessionRunPage() {
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
 
-  // FIX: Capture the blob URL in a ref at mount time so the cleanup
-  // closure always holds the original value and is never affected by
-  // re-renders or React Strict Mode’s double-invoke. Empty dep array
-  // guarantees this runs exactly once on true unmount.
-  const videoObjectURL = state?.videoObjectURL ?? '';
-  const videoObjectURLRef = useRef(videoObjectURL);
+  // Revoke the blob URL and clear the store on true unmount.
+  // Empty dep array = runs cleanup exactly once regardless of re-renders
+  // or React Strict Mode double-invoke.
   useEffect(() => {
-    return () => {
-      if (videoObjectURLRef.current) {
-        URL.revokeObjectURL(videoObjectURLRef.current);
-      }
-    };
+    return () => { revokeSessionVideo(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!state?.anime) {
+  if (!state?.anime || !videoObjectURL) {
     return (
       <div className="text-center py-20 space-y-4">
         <p className="text-5xl">🎬</p>
@@ -64,7 +62,7 @@ export default function SessionRunPage() {
     );
   }
 
-  const { anime, episode, mode, videoFile } = state;
+  const { anime, episode, mode } = state;
 
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
@@ -169,7 +167,7 @@ export default function SessionRunPage() {
       {/* Transcribe panel — visible until transcription completes */}
       {!transcribeDone && (
         <TranscribePanel
-          videoFile={videoFile ?? null}
+          videoFile={videoFile}
           onResult={handleTranscribeResult}
           onDone={handleTranscribeDone}
         />

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ANIME_LIBRARY } from '../data/animeLibrary';
 import { parseSubtitleFile } from '../lib/subtitleParser';
+import { setSessionVideo } from '../lib/sessionStore';
 import type { AnimeTitle, ShadowingMode, SubtitleLine } from '../types';
 
 export default function SessionSetupPage() {
@@ -61,14 +62,21 @@ export default function SessionSetupPage() {
     }
 
     const episode = anime.episodes.find(ep => ep.episode_number === episodeNum);
+
+    // FIX: File and blob URL cannot survive history.pushState serialization.
+    // Store them in the module-level sessionStore instead, then navigate with
+    // only serializable data (strings, numbers, plain objects) in state.
+    const objectURL = URL.createObjectURL(videoFile);
+    setSessionVideo(videoFile, objectURL);
+
     navigate('/session/run', {
       state: {
         anime,
         episode,
         mode,
         subtitleLines: parsedLines,
-        videoFile,                           // pass File directly for Transformers.js
-        videoObjectURL: URL.createObjectURL(videoFile),
+        // videoFile and videoObjectURL are intentionally NOT here —
+        // SessionRunPage reads them from sessionStore.
       },
     });
   }
