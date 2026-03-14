@@ -22,6 +22,12 @@ interface LocationState {
 const SPEEDS = [0.6, 0.8, 1.0] as const;
 type Speed = typeof SPEEDS[number];
 
+const MODES: { value: ShadowingMode; emoji: string; label: string }[] = [
+  { value: 'watch',     emoji: '👀', label: 'Watch'     },
+  { value: 'shadow',    emoji: '🗣️', label: 'Shadow'    },
+  { value: 'dictation', emoji: '✏️', label: 'Dictation' },
+];
+
 export default function SessionRunPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,6 +44,9 @@ export default function SessionRunPage() {
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
 
+  // mode is local state — switching it never requires a re-upload
+  const [activeMode, setActiveMode] = useState<ShadowingMode>(state?.mode ?? 'shadow');
+
   if (!state?.anime) {
     return (
       <div className="text-center py-20 space-y-4">
@@ -50,7 +59,7 @@ export default function SessionRunPage() {
     );
   }
 
-  const { anime, episode, mode, videoObjectURL, videoFile } = state;
+  const { anime, episode, videoObjectURL, videoFile } = state;
 
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
@@ -80,7 +89,7 @@ export default function SessionRunPage() {
       anime_title:         anime.title,
       episode_id:          episode?.id ?? '',
       episode_number:      episode?.episode_number ?? 1,
-      mode,
+      mode:                activeMode,
       started_at:          sessionStartRef.current,
       ended_at:            now,
       sentences_total:     lines.length,
@@ -106,7 +115,9 @@ export default function SessionRunPage() {
         <span className="text-2xl">{anime.cover_emoji}</span>
         <div className="flex-1 min-w-0">
           <h1 className="font-black text-base truncate">{anime.title}</h1>
-          <p className="text-xs text-gray-400">Ep. {episode?.episode_number ?? 1} · {mode} mode</p>
+          <p className="text-xs text-gray-400">
+            Ep. {episode?.episode_number ?? 1} · {activeMode} mode
+          </p>
         </div>
         <button
           onClick={commitSession}
@@ -132,10 +143,11 @@ export default function SessionRunPage() {
         speed={speed}
       />
 
-      {/* Speed toggle */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-500 font-semibold">Speed</span>
-        <div className="flex gap-1">
+      {/* Speed + Mode toggles — single row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Speed */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-500 font-semibold">Speed</span>
           {SPEEDS.map(s => (
             <button
               key={s}
@@ -147,6 +159,28 @@ export default function SessionRunPage() {
               }`}
             >
               {s === 1 ? '1×' : `${s}×`}
+            </button>
+          ))}
+        </div>
+
+        {/* Divider */}
+        <span className="text-gray-700 select-none">|</span>
+
+        {/* Mode */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-500 font-semibold">Mode</span>
+          {MODES.map(m => (
+            <button
+              key={m.value}
+              onClick={() => setActiveMode(m.value)}
+              title={m.label}
+              className={`text-xs font-bold px-3 py-1 rounded-full border transition-colors ${
+                activeMode === m.value
+                  ? 'bg-indigo-600 border-indigo-500 text-white'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+              }`}
+            >
+              {m.emoji} {m.label}
             </button>
           ))}
         </div>
@@ -170,7 +204,7 @@ export default function SessionRunPage() {
           animeName={anime.title}
           episodeNumber={episode?.episode_number ?? 1}
           videoRef={videoRef}
-          mode={mode}
+          mode={activeMode}
           shadowDelayMs={settings.shadow_delay_ms}
           onSentenceComplete={handleSentenceComplete}
           onSaved={handleSaved}
