@@ -1,7 +1,6 @@
 /**
  * TranscribePanel — in-browser Whisper transcription UI with streaming support.
  * Calls onResult() after every chunk so the user can start shadowing immediately.
- * Calls onDone() once the final complete subtitle set is ready.
  */
 import { useState, useCallback } from 'react';
 import {
@@ -15,13 +14,11 @@ import type { SubtitleLine } from '../types/index';
 interface Props {
   videoFile: File | null;
   onResult: (lines: SubtitleLine[]) => void;
-  /** Called once with the final complete subtitle set when transcription finishes. */
-  onDone?: (lines: SubtitleLine[]) => void;
 }
 
 type Phase = 'idle' | 'decoding' | 'loading-model' | 'transcribing' | 'done' | 'error';
 
-export default function TranscribePanel({ videoFile, onResult, onDone }: Props) {
+export default function TranscribePanel({ videoFile, onResult }: Props) {
   const { settings }              = useSettings();
   const [phase, setPhase]         = useState<Phase>('idle');
   const [progress, setProgress]   = useState(0);
@@ -78,7 +75,6 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         setProgress(pct);
         setStatus('Transcribing…');
         setSubMsg(`Chunk ${ci} / ${tc} — subtitles updating`);
-        // Stream partial lines to player immediately
         if (ev.partialLines && ev.partialLines.length > 0) {
           setStreaming(true);
           onResult(ev.partialLines);
@@ -92,13 +88,12 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
       setStatus(`Done — ${lines.length} subtitle lines`);
       setSubMsg('');
       setStreaming(false);
-      onResult(lines);   // final complete set for the player
-      onDone?.(lines);   // FIX: signal SessionRunPage to hide this panel
+      onResult(lines);
     } catch (e) {
       setPhase('error');
       setError((e as Error).message);
     }
-  }, [videoFile, onResult, onDone, settings.whisper_model]);
+  }, [videoFile, onResult, settings.whisper_model]);
 
   const modelLabel = settings.whisper_model.replace('Xenova/', '');
 
@@ -138,7 +133,7 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
     );
   }
 
-  if (phase === 'done') return null; // subtitle player takes full focus when done
+  if (phase === 'done') return null;
 
   const barWidth   = phase === 'transcribing'  ? Math.max(progress, 2)
                    : phase === 'loading-model' ? Math.max(progress, 2)

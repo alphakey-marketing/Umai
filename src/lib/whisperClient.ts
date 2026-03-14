@@ -30,9 +30,10 @@ let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
-    // Classic worker (no type:'module') so importScripts() works inside it.
-    // The worker script lives in public/ and is served as a static asset.
-    worker = new Worker('/transcribeWorker.js');
+    worker = new Worker(
+      new URL('./transcribeWorker.ts', import.meta.url),
+      { type: 'module' }
+    );
     loadedModel = null;
   }
   return worker;
@@ -121,7 +122,6 @@ export async function transcribeVideoFile(
 
   for (let i = 0; i < chunks.length; i++) {
     const { data, offsetSec } = chunks[i];
-
     const result = await workerRoundTrip(
       w,
       { type: 'transcribe', audioData: data, model, chunkIndex: i + 1, totalChunks, offsetSec },
@@ -129,9 +129,9 @@ export async function transcribeVideoFile(
       'chunkResult'
     ) as { lines: SubtitleLine[] };
 
-    const deduped    = deduplicateLines(allLines, result.lines);
-    const reindexed  = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
-    lineOffset      += reindexed.length;
+    const deduped   = deduplicateLines(allLines, result.lines);
+    const reindexed = deduped.map((l, j) => ({ ...l, index: lineOffset + j + 1 }));
+    lineOffset     += reindexed.length;
     allLines.push(...reindexed);
 
     progressCb?.({
