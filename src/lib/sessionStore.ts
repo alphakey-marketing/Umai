@@ -1,27 +1,11 @@
 /**
- * sessionStore.ts
+ * sessionStore.ts — intentionally empty / no-op.
  *
- * Holds the video File across the navigate() boundary.
- * File objects cannot survive history.pushState (structured-clone drops them).
+ * Previous attempts to use this module to pass File + videoObjectURL across
+ * navigate() introduced React Strict Mode revoke races that broke video playback.
  *
- * SessionSetupPage writes the File here before navigate().
- * SessionRunPage reads it on mount, creates its OWN blob URL via useRef,
- * and is solely responsible for revoking it.
- *
- * We deliberately do NOT store or manage the blob URL here anymore —
- * that was the source of the Strict Mode revoke race.
+ * The original working pattern (passing both via location.state) is restored.
+ * This file is kept to avoid broken imports but exports nothing meaningful.
  */
 
-let _videoFile: File | null = null;
-
-export function setSessionFile(file: File): void {
-  _videoFile = file;
-}
-
-export function getSessionFile(): File | null {
-  return _videoFile;
-}
-
-export function clearSessionFile(): void {
-  _videoFile = null;
-}
+export {};

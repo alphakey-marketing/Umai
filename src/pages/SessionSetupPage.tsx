@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ANIME_LIBRARY } from '../data/animeLibrary';
 import { parseSubtitleFile } from '../lib/subtitleParser';
-import { setSessionFile } from '../lib/sessionStore';
 import type { AnimeTitle, ShadowingMode, SubtitleLine } from '../types';
 
 export default function SessionSetupPage() {
@@ -63,17 +62,14 @@ export default function SessionSetupPage() {
 
     const episode = anime.episodes.find(ep => ep.episode_number === episodeNum);
 
-    // Store the File in the module-level store so SessionRunPage can read it.
-    // Do NOT create the blob URL here — SessionRunPage owns that lifecycle.
-    setSessionFile(videoFile);
-
     navigate('/session/run', {
       state: {
         anime,
         episode,
         mode,
         subtitleLines: parsedLines,
-        // videoFile intentionally excluded — not serializable via pushState
+        videoFile,
+        videoObjectURL: URL.createObjectURL(videoFile),
       },
     });
   }

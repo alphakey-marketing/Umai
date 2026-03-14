@@ -1,21 +1,22 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import VideoPlayer from '../components/VideoPlayer';
 import SubtitlePlayer from '../components/SubtitlePlayer';
 import TranscribePanel from '../components/TranscribePanel';
 import { saveShadowSession, recordTodayActivity } from '../lib/shadowStorage';
 import { useSettings } from '../lib/settingsContext';
-import { getSessionFile, clearSessionFile } from '../lib/sessionStore';
 import type {
   AnimeTitle, AnimeEpisode, ShadowingMode,
   SubtitleLine, ShadowingSession, VaultEntry,
 } from '../types';
 
 interface LocationState {
-  anime:         AnimeTitle;
-  episode:       AnimeEpisode;
-  mode:          ShadowingMode;
-  subtitleLines: SubtitleLine[];
+  anime:          AnimeTitle;
+  episode:        AnimeEpisode;
+  mode:           ShadowingMode;
+  subtitleLines:  SubtitleLine[];
+  videoFile:      File;
+  videoObjectURL: string;
 }
 
 const SPEEDS = [0.6, 0.8, 1.0] as const;
@@ -27,51 +28,6 @@ export default function SessionRunPage() {
   const state    = location.state as LocationState | null;
   const { settings } = useSettings();
 
-  // --- Video file + blob URL lifecycle ---
-  //
-  // The File lives in sessionStore (survives navigate, not serialized).
-  // We create the blob URL HERE, once, in a ref. This is the ONLY place
-  // it is created and the ONLY place it is revoked.
-  //
-  // Why useRef and not useState or a plain variable:
-  //   - useRef: created once on first render, stable across re-renders,
-  //     NOT affected by React Strict Mode’s double-invoke of effects.
-  //   - We do NOT put URL.createObjectURL inside a useEffect because that
-  //     runs AFTER the first paint, leaving the video src blank initially.
-  //
-  // Why we use a "mounted" ref guard for revoke:
-  //   - React Strict Mode calls the cleanup of useEffect([]) twice in dev.
-  //   - We only want to revoke on the REAL unmount, not the fake one.
-  //   - The mounted ref is set to false only when the real unmount fires,
-  //     which we detect by checking if the component is still in the tree.
-  //
-  // Actually the cleanest solution: store the URL in a ref, revoke it
-  // with a ref-based cleanup that is immune to Strict Mode because we
-  // use the ref value directly in the cleanup closure — no state reads.
-  const videoFile = getSessionFile();
-  const blobURLRef = useRef<string>('');
-  if (!blobURLRef.current && videoFile) {
-    // Runs synchronously on first render (and on Strict Mode’s second render).
-    // On the second render the ref already has a value so this is skipped.
-    blobURLRef.current = URL.createObjectURL(videoFile);
-  }
-  const videoObjectURL = blobURLRef.current;
-
-  // Revoke the blob URL when the component truly unmounts.
-  // We use a separate ref so the cleanup closure captures a stable pointer
-  // to the same ref object — it will always read the current URL value
-  // regardless of when cleanup fires.
-  useEffect(() => {
-    return () => {
-      if (blobURLRef.current) {
-        URL.revokeObjectURL(blobURLRef.current);
-        blobURLRef.current = '';
-      }
-      clearSessionFile();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const videoRef                            = useRef<HTMLVideoElement>(null);
   const [currentMs, setCurrentMs]           = useState(0);
   const [lines, setLines]                   = useState<SubtitleLine[]>(state?.subtitleLines ?? []);
@@ -82,7 +38,7 @@ export default function SessionRunPage() {
   const [videoEnded, setVideoEnded]         = useState(false);
   const sessionStartRef                     = useRef(new Date().toISOString());
 
-  if (!state?.anime || !videoObjectURL) {
+  if (!state?.anime) {
     return (
       <div className="text-center py-20 space-y-4">
         <p className="text-5xl">🎬</p>
@@ -94,7 +50,7 @@ export default function SessionRunPage() {
     );
   }
 
-  const { anime, episode, mode } = state;
+  const { anime, episode, mode, videoObjectURL, videoFile } = state;
 
   const handleTranscribeResult = useCallback((result: SubtitleLine[]) => {
     setLines(result);
@@ -196,10 +152,10 @@ export default function SessionRunPage() {
         </div>
       </div>
 
-      {/* Transcribe panel — visible until transcription completes */}
+      {/* Transcribe panel — visible until done */}
       {!transcribeDone && (
         <TranscribePanel
-          videoFile={videoFile}
+          videoFile={videoFile ?? null}
           onResult={handleTranscribeResult}
           onDone={handleTranscribeDone}
         />
