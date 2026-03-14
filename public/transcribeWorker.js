@@ -1,15 +1,24 @@
 /**
  * public/transcribeWorker.js
  *
- * Classic Web Worker loaded via: new Worker('/transcribeWorker.js')
+ * Classic Web Worker — loaded by whisperClient via:
+ *   new Worker('/transcribeWorker.js')   (no type:'module')
  *
- * Uses importScripts('/transformers.min.js') — served from the same origin
- * (copied from node_modules at build time by scripts/copy-transformers.js).
- * Same-origin scripts are never blocked by CSP worker-src restrictions.
+ * importScripts() works in classic workers and loads the UMD bundle
+ * synchronously. The library JS never passes through Vite/esbuild so
+ * BigInt literals inside @xenova/transformers are never a build issue.
  */
 
-// Load the UMD bundle from our own origin — never blocked by CSP
-importScripts('/transformers.min.js');
+const CDN_URL =
+  'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
+
+let transformersLoaded = false;
+
+function ensureTransformers() {
+  if (transformersLoaded) return;
+  importScripts(CDN_URL);
+  transformersLoaded = true;
+}
 
 let currentModel = '';
 let transcriber = null;
@@ -18,6 +27,8 @@ async function getTranscriber(model) {
   if (transcriber && currentModel === model) return transcriber;
   transcriber = null;
   currentModel = model;
+
+  ensureTransformers();
 
   const { pipeline, env } = self.transformers;
 

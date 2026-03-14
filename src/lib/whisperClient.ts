@@ -1,9 +1,5 @@
 /**
  * whisperClient.ts
- *
- * Decodes audio on the main thread, splits into 30s chunks,
- * sends each chunk to the worker one-at-a-time, streams
- * partial subtitle lines back, and deduplicates at boundaries.
  */
 import type { SubtitleLine } from '../types/index';
 
@@ -29,9 +25,6 @@ let loadedModel: string | null = null;
 
 function getWorker(): Worker {
   if (!worker) {
-    // Classic worker — lives in public/ so Vite never processes it.
-    // importScripts() works in classic workers; BigInt in @xenova is never
-    // seen by esbuild.
     worker = new Worker('/transcribeWorker.js');
     loadedModel = null;
   }

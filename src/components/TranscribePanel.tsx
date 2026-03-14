@@ -1,7 +1,5 @@
 /**
  * TranscribePanel — in-browser Whisper transcription UI with streaming support.
- * Calls onResult() after every chunk so the user can start shadowing immediately.
- * Calls onDone() once the final complete subtitle set is ready.
  */
 import { useState, useCallback } from 'react';
 import {
@@ -60,7 +58,7 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         setPhase('loading-model');
         setProgress(pct);
         setStatus(`Downloading model — ${pct}%`);
-        setSubMsg(ev.file ? `${ev.file}` : '');
+        setSubMsg(ev.file ?? '');
       } else if (ev.status === 'done') {
         setSubMsg(ev.file ? `✓ ${ev.file}` : '✓ Loaded');
       } else if (ev.status === 'ready') {
@@ -138,9 +136,7 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
 
   if (phase === 'done') return null;
 
-  const barWidth   = phase === 'transcribing'  ? Math.max(progress, 2)
-                   : phase === 'loading-model' ? Math.max(progress, 2)
-                   : 30;
+  const barWidth   = phase === 'loading-model' || phase === 'transcribing' ? Math.max(progress, 2) : 30;
   const barAnimate = phase === 'decoding' || (phase === 'transcribing' && totalChunks === 0);
   const showCount  = phase === 'loading-model' || phase === 'transcribing';
 
@@ -154,24 +150,18 @@ export default function TranscribePanel({ videoFile, onResult, onDone }: Props) 
         </div>
         {showCount && (
           <span className="text-xs font-bold text-indigo-400 shrink-0">
-            {phase === 'transcribing' && totalChunks > 0
-              ? `${chunkIndex} / ${totalChunks}`
-              : `${progress}%`}
+            {phase === 'transcribing' && totalChunks > 0 ? `${chunkIndex} / ${totalChunks}` : `${progress}%`}
           </span>
         )}
       </div>
       <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
         <div
-          className={`bg-indigo-500 h-1.5 rounded-full transition-all duration-500 ${
-            barAnimate ? 'animate-pulse' : ''
-          }`}
+          className={`bg-indigo-500 h-1.5 rounded-full transition-all duration-500 ${barAnimate ? 'animate-pulse' : ''}`}
           style={{ width: `${barWidth}%` }}
         />
       </div>
       {streaming && (
-        <p className="text-xs text-indigo-400 font-semibold">
-          ▶️ You can start shadowing! More subtitles loading…
-        </p>
+        <p className="text-xs text-indigo-400 font-semibold">▶️ You can start shadowing! More subtitles loading…</p>
       )}
     </div>
   );
